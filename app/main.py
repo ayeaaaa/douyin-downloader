@@ -136,7 +136,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(
         BodySizeLimitMiddleware,
         max_bytes=MAX_BODY_BYTES,
-        cookie_max_bytes=cookies_store.MAX_COOKIE_BYTES + 4096,
+        cookie_max_bytes=cookies_store.MAX_COOKIE_BYTES * 2 + 65536,
     )
 
     if settings.access_password:
@@ -266,7 +266,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/cookies")
     async def api_cookies_save(payload: dict):
-        content = (payload or {}).get("content") or ""
+        content = (payload or {}).get("content")
+        if not isinstance(content, str):
+            return JSONResponse({"error": "内容格式不正确"}, status_code=400)
         try:
             status = await asyncio.to_thread(
                 cookies_store.write_cookies, settings.cookies_path, content

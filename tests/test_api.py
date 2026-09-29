@@ -392,10 +392,34 @@ def test_cookies_save_rejects_bad_format(tmp_path):
     assert response.status_code == 400
 
 
-def test_cookies_save_rejects_too_large_body(tmp_path):
+def test_cookies_save_rejects_content_over_limit(tmp_path):
     client = make_client(tmp_path)
     response = client.post("/api/cookies", json={"content": "x" * (1024 * 1024 + 8192)})
+    assert response.status_code == 400
+
+
+def test_cookies_save_rejects_oversized_body(tmp_path):
+    client = make_client(tmp_path)
+    response = client.post("/api/cookies", json={"content": "x" * (3 * 1024 * 1024)})
     assert response.status_code == 413
+
+
+def test_cookies_save_accepts_near_limit_file(tmp_path):
+    client = make_client(tmp_path)
+    line = ".douyin.com\tTRUE\t/\tFALSE\t0\tttwid\t" + "x" * 60 + "\n"
+    header = "# Netscape HTTP Cookie File\n"
+    count = (1024 * 1024 - 1024) // len(line)
+    content = header + line * count
+    assert len(content.encode("utf-8")) < 1024 * 1024
+    response = client.post("/api/cookies", json={"content": content})
+    assert response.status_code == 200
+    assert response.json()["entries"] == count
+
+
+def test_cookies_save_rejects_non_string_content(tmp_path):
+    client = make_client(tmp_path)
+    response = client.post("/api/cookies", json={"content": 123})
+    assert response.status_code == 400
 
 
 def test_cookies_save_clears_parse_cache(tmp_path, monkeypatch):
