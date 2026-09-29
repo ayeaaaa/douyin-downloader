@@ -4,6 +4,7 @@ import re
 import httpx
 import yt_dlp
 
+from .http_safe import redirect_target
 from .security import is_safe_public_url
 
 URL_RE = re.compile(
@@ -62,17 +63,26 @@ BROWSER_UA = (
 
 
 def probe_direct(url: str, headers: dict, timeout: float = 10.0) -> bool:
-    if not is_safe_public_url(url):
-        return False
     request_headers = {"User-Agent": BROWSER_UA}
     request_headers.update({k: v for k, v in headers.items() if k.lower() != "referer"})
+    current = url
     try:
-        with httpx.Client(follow_redirects=True, timeout=timeout) as client:
-            response = client.get(
-                url, headers={**request_headers, "Range": "bytes=0-0"}
-            )
-        return response.status_code in (200, 206)
-    except httpx.HTTPError:
+        with httpx.Client(timeout=timeout) as client:
+            for _ in range(6):
+                if not is_safe_public_url(current):
+                    return False
+                with client.stream(
+                    "GET",
+                    current,
+                    headers={**request_headers, "Range": "bytes=0-0"},
+                    follow_redirects=False,
+                ) as response:
+                    target = redirect_target(response, current)
+                    if target is None:
+                        return response.status_code in (200, 206)
+                current = target
+        return False
+    except (httpx.HTTPError, httpx.InvalidURL):
         return False
 
 

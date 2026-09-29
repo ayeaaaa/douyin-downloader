@@ -1,3 +1,5 @@
+import httpx
+
 from app import extractor
 
 
@@ -157,3 +159,39 @@ def test_parse_url_rejects_unsafe_url(monkeypatch):
     result = extractor.parse_url("http://127.0.0.1/x")
     assert result["ok"] is False
     assert result["error"] == "不支持的链接"
+
+
+def test_probe_direct_follows_redirect_and_returns_true(monkeypatch):
+    def handler(request):
+        if request.url.path == "/video":
+            return httpx.Response(
+                302, headers={"location": "https://cdn.example.com/v.mp4"}
+            )
+        return httpx.Response(206, headers={"content-range": "bytes 0-0/1000"})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        extractor.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(extractor, "is_safe_public_url", lambda url: True)
+    assert extractor.probe_direct("https://cdn.example.com/video", {}) is True
+
+
+def test_probe_direct_rejects_redirect_to_private(monkeypatch):
+    def handler(request):
+        return httpx.Response(302, headers={"location": "http://127.0.0.1/secret"})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        extractor.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(
+        extractor,
+        "is_safe_public_url",
+        lambda url: not url.startswith("http://127.0.0.1"),
+    )
+    assert extractor.probe_direct("https://cdn.example.com/video", {}) is False
