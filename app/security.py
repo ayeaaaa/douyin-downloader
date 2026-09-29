@@ -35,7 +35,7 @@ def sanitize_filename(name: str, max_length: int = 120) -> str:
 
 def _is_public_ip(ip_text: str) -> bool:
     ip = ipaddress.ip_address(ip_text)
-    return not (
+    return ip.is_global and not (
         ip.is_private
         or ip.is_loopback
         or ip.is_link_local
@@ -87,7 +87,9 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
             try:
                 decoded = base64.b64decode(header[6:]).decode("utf-8")
                 _, _, password = decoded.partition(":")
-                if secrets.compare_digest(password, self.password):
+                if secrets.compare_digest(
+                    password.encode("utf-8"), self.password.encode("utf-8")
+                ):
                     return await call_next(request)
             except Exception:
                 pass

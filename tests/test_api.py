@@ -189,3 +189,43 @@ def test_relay_response_releases_on_immediate_disconnect(tmp_path):
     locked = asyncio.run(run())
     assert not job_dir.exists()
     assert locked is False
+
+
+def test_parse_rejects_too_large_body(tmp_path):
+    client = make_client(tmp_path)
+    response = client.post("/api/parse", json={"text": "a" * 70000})
+    assert response.status_code == 413
+
+
+def test_parse_handles_concurrent_requests(tmp_path, monkeypatch):
+    import time
+
+    def fake_parse(url, cookies_path=None):
+        time.sleep(0.05)
+        return {
+            "url": url,
+            "ok": True,
+            "title": "t",
+            "author": "",
+            "cover": "",
+            "duration": 0,
+            "direct_url": None,
+            "direct_ok": False,
+            "error": None,
+        }
+
+    monkeypatch.setattr(extractor, "parse_url", fake_parse)
+    client = make_client(tmp_path)
+
+    async def run():
+        transport = httpx.ASGITransport(app=client.app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as http:
+            return await asyncio.gather(
+                http.post("/api/parse", json={"text": "https://v.douyin.com/a/"}),
+                http.post("/api/parse", json={"text": "https://v.douyin.com/b/"}),
+            )
+
+    responses = asyncio.run(run())
+    assert [response.status_code for response in responses] == [200, 200]

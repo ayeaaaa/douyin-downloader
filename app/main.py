@@ -9,6 +9,7 @@ import httpx
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import downloader, extractor
 from .http_safe import safe_get_async
@@ -16,6 +17,7 @@ from .security import BasicAuthMiddleware, is_allowed_cover_url, sanitize_filena
 
 STATIC_DIR = Path(__file__).parent / "static"
 DEFAULT_TEMP_DIR = "/tmp/douyin-dl"
+MAX_BODY_BYTES = 64 * 1024
 
 
 @dataclass
@@ -69,13 +71,30 @@ class _RelayResponse(StreamingResponse):
         try:
             await super().__call__(scope, receive, send)
         finally:
+            self._release()
             aclose = getattr(self.body_iterator, "aclose", None)
             if aclose is not None:
                 try:
                     await aclose()
                 except Exception:
                     pass
-            self._release()
+
+
+class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, max_bytes: int):
+        super().__init__(app)
+        self.max_bytes = max_bytes
+
+    async def dispatch(self, request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length:
+            try:
+                length = int(content_length)
+            except ValueError:
+                length = 0
+            if length > self.max_bytes:
+                return JSONResponse({"error": "请求体过大"}, status_code=413)
+        return await call_next(request)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -85,6 +104,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Douyin Downloader")
     app.state.download_semaphore = asyncio.Semaphore(1)
+    app.state.parse_semaphore = asyncio.Semaphore(2)
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_BODY_BYTES)
 
     if settings.access_password:
         app.add_middleware(BasicAuthMiddleware, password=settings.access_password)
@@ -107,9 +128,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse({"error": "一次最多解析 20 条链接"}, status_code=400)
         results = []
         for url in urls:
-            results.append(
-                await asyncio.to_thread(extractor.parse_url, url, settings.cookies_path)
-            )
+            async with app.state.parse_semaphore:
+                results.append(
+                    await asyncio.to_thread(
+                        extractor.parse_url, url, settings.cookies_path
+                    )
+                )
         return {"results": results}
 
     @app.get("/api/download")

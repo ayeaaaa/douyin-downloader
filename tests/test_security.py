@@ -32,6 +32,7 @@ def test_safe_public_url_rejects_private_and_bad_scheme():
     assert not is_safe_public_url("ftp://example.com/a")
     assert not is_safe_public_url("http://127.0.0.1/a")
     assert not is_safe_public_url("http://192.168.1.10/a")
+    assert not is_safe_public_url("http://100.64.0.1/a")
 
 
 def test_safe_public_url_rejects_malformed_ipv6():
@@ -92,3 +93,14 @@ def test_basic_auth_middleware():
     assert client.get("/healthz").status_code == 200
     assert client.get("/", auth=("any", "wrong")).status_code == 401
     assert client.get("/", auth=("any", "secret")).status_code == 200
+
+
+def test_basic_auth_middleware_non_ascii_password():
+    async def homepage(request):
+        return PlainTextResponse("ok")
+
+    inner = Starlette(routes=[Route("/", homepage)])
+    inner.add_middleware(BasicAuthMiddleware, password="密码")
+    client = TestClient(inner)
+    assert client.get("/", auth=("any", "密码")).status_code == 200
+    assert client.get("/", auth=("any", "wrong")).status_code == 401
