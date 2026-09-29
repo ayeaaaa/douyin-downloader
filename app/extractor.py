@@ -1,4 +1,10 @@
+import os
 import re
+
+import httpx
+import yt_dlp
+
+from .security import is_safe_public_url
 
 URL_RE = re.compile(
     r"https?://[^\s\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\"'<>]+",
@@ -47,3 +53,74 @@ def pick_direct_format(info: dict) -> tuple[str | None, dict]:
     best = max(candidates, key=lambda f: (f.get("height") or 0, f.get("tbr") or 0))
     headers = dict(best.get("http_headers") or {})
     return best["url"], headers
+
+
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+
+def probe_direct(url: str, headers: dict, timeout: float = 10.0) -> bool:
+    if not is_safe_public_url(url):
+        return False
+    request_headers = {"User-Agent": BROWSER_UA}
+    request_headers.update({k: v for k, v in headers.items() if k.lower() != "referer"})
+    try:
+        with httpx.Client(follow_redirects=True, timeout=timeout) as client:
+            response = client.get(
+                url, headers={**request_headers, "Range": "bytes=0-0"}
+            )
+        return response.status_code in (200, 206)
+    except httpx.HTTPError:
+        return False
+
+
+def parse_url(url: str, cookies_path: str | None = None, probe: bool = True) -> dict:
+    result = {
+        "url": url,
+        "ok": False,
+        "title": "",
+        "author": "",
+        "cover": "",
+        "duration": 0,
+        "direct_url": None,
+        "direct_ok": False,
+        "error": None,
+    }
+    if not is_safe_public_url(url):
+        result["error"] = "不支持的链接"
+        return result
+
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "noplaylist": True,
+        "socket_timeout": 15,
+    }
+    if cookies_path and os.path.isfile(cookies_path):
+        options["cookiefile"] = cookies_path
+
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as exc:
+        result["error"] = humanize_error(exc)
+        return result
+
+    if info.get("_type") == "playlist":
+        entries = [entry for entry in info.get("entries") or [] if entry]
+        info = entries[0] if entries else info
+
+    result["ok"] = True
+    result["title"] = info.get("title") or ""
+    result["author"] = info.get("uploader") or info.get("creator") or ""
+    result["cover"] = info.get("thumbnail") or ""
+    result["duration"] = int(info.get("duration") or 0)
+
+    direct_url, headers = pick_direct_format(info)
+    if direct_url:
+        result["direct_url"] = direct_url
+        result["direct_ok"] = probe_direct(direct_url, headers) if probe else True
+    return result

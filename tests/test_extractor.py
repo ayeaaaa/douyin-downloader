@@ -83,3 +83,77 @@ def test_pick_direct_format_none_when_only_split_streams():
         ]
     }
     assert extractor.pick_direct_format(info) == (None, {})
+
+
+def test_parse_url_success(monkeypatch):
+    class FakeYDL:
+        def __init__(self, opts):
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=False):
+            assert download is False
+            return {
+                "title": "测试视频",
+                "uploader": "作者",
+                "thumbnail": "https://p3-sign.douyinpic.com/t.jpg",
+                "duration": 15,
+                "formats": [
+                    {
+                        "url": "https://cdn/v.mp4",
+                        "ext": "mp4",
+                        "vcodec": "h264",
+                        "acodec": "aac",
+                        "height": 720,
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(extractor.yt_dlp, "YoutubeDL", FakeYDL)
+    monkeypatch.setattr(extractor, "is_safe_public_url", lambda url: True)
+    monkeypatch.setattr(extractor, "probe_direct", lambda url, headers: True)
+
+    result = extractor.parse_url("https://v.douyin.com/x/")
+
+    assert result["ok"] is True
+    assert result["title"] == "测试视频"
+    assert result["author"] == "作者"
+    assert result["duration"] == 15
+    assert result["direct_url"] == "https://cdn/v.mp4"
+    assert result["direct_ok"] is True
+    assert result["error"] is None
+
+
+def test_parse_url_error_isolated(monkeypatch):
+    class FakeYDL:
+        def __init__(self, opts):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=False):
+            raise RuntimeError("Sign in to confirm you are not a bot")
+
+    monkeypatch.setattr(extractor.yt_dlp, "YoutubeDL", FakeYDL)
+    monkeypatch.setattr(extractor, "is_safe_public_url", lambda url: True)
+
+    result = extractor.parse_url("https://v.douyin.com/x/")
+
+    assert result["ok"] is False
+    assert result["error"] == "需要登录,请配置 cookies.txt"
+
+
+def test_parse_url_rejects_unsafe_url(monkeypatch):
+    monkeypatch.setattr(extractor, "is_safe_public_url", lambda url: False)
+    result = extractor.parse_url("http://127.0.0.1/x")
+    assert result["ok"] is False
+    assert result["error"] == "不支持的链接"
