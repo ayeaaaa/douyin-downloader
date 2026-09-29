@@ -1,6 +1,7 @@
 import asyncio
 import os
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
@@ -26,6 +27,7 @@ class Settings:
     max_filesize_mb: int = 500
     cookies_path: str = "/data/cookies.txt"
     temp_dir: str = DEFAULT_TEMP_DIR
+    cache_ttl_seconds: int = 900
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -34,6 +36,7 @@ class Settings:
             max_filesize_mb=int(os.environ.get("MAX_FILESIZE_MB", "500")),
             cookies_path=os.environ.get("COOKIES_PATH", "/data/cookies.txt"),
             temp_dir=os.environ.get("TEMP_DIR", DEFAULT_TEMP_DIR),
+            cache_ttl_seconds=int(os.environ.get("CACHE_TTL_SECONDS", "900")),
         )
 
 
@@ -80,6 +83,23 @@ class _RelayResponse(StreamingResponse):
                     pass
 
 
+def _cache_get(cache: dict, key: str):
+    item = cache.get(key)
+    if item is None:
+        return None
+    expires_at, value = item
+    if expires_at < time.monotonic():
+        cache.pop(key, None)
+        return None
+    return value
+
+
+def _cache_set(cache: dict, key: str, value, ttl_seconds: int) -> None:
+    if len(cache) >= 100:
+        cache.clear()
+    cache[key] = (time.monotonic() + ttl_seconds, value)
+
+
 class BodySizeLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, max_bytes: int):
         super().__init__(app)
@@ -105,6 +125,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Douyin Downloader")
     app.state.download_semaphore = asyncio.Semaphore(1)
     app.state.parse_semaphore = asyncio.Semaphore(2)
+    app.state.parse_cache = {}
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_BODY_BYTES)
 
     if settings.access_password:
@@ -128,12 +149,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse({"error": "一次最多解析 20 条链接"}, status_code=400)
         results = []
         for url in urls:
+            cached = _cache_get(app.state.parse_cache, url)
+            if cached is not None:
+                results.append(cached)
+                continue
             async with app.state.parse_semaphore:
-                results.append(
-                    await asyncio.to_thread(
-                        extractor.parse_url, url, settings.cookies_path
-                    )
+                result = await asyncio.to_thread(
+                    extractor.parse_url, url, settings.cookies_path
                 )
+            if result.get("ok"):
+                _cache_set(
+                    app.state.parse_cache,
+                    url,
+                    result,
+                    settings.cache_ttl_seconds,
+                )
+            results.append(result)
         return {"results": results}
 
     @app.get("/api/download")
@@ -149,19 +180,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         job_dir = None
         handed_off = False
         try:
+            cached = _cache_get(app.state.parse_cache, url)
+            direct_url = (
+                cached.get("direct_url") if cached and cached.get("direct_ok") else None
+            )
             job_dir = tempfile.mkdtemp(dir=settings.temp_dir, prefix="job-")
-            try:
-                path, title = await asyncio.to_thread(
-                    downloader.download_to_temp,
-                    url,
-                    job_dir,
-                    settings.cookies_path,
-                    settings.max_filesize_mb,
-                )
-            except downloader.DownloadError as exc:
-                return JSONResponse(
-                    {"error": extractor.humanize_error(exc)}, status_code=502
-                )
+            path = None
+            title = "video"
+            if direct_url:
+                try:
+                    path = await asyncio.to_thread(
+                        downloader.fetch_direct_to_temp,
+                        direct_url,
+                        str(Path(job_dir) / "direct.mp4"),
+                        settings.max_filesize_mb,
+                        {"User-Agent": extractor.BROWSER_UA},
+                    )
+                    title = cached.get("title") or "video"
+                except downloader.DownloadError:
+                    path = None
+            if path is None:
+                try:
+                    path, title = await asyncio.to_thread(
+                        downloader.download_to_temp,
+                        url,
+                        job_dir,
+                        settings.cookies_path,
+                        settings.max_filesize_mb,
+                    )
+                except downloader.DownloadError as exc:
+                    return JSONResponse(
+                        {"error": extractor.humanize_error(exc, url)},
+                        status_code=502,
+                    )
             filename = sanitize_filename(title) + path.suffix
             response = _RelayResponse(
                 path,

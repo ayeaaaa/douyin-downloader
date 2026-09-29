@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import httpx
 import pytest
 
 from app import downloader
@@ -89,6 +90,49 @@ def test_download_to_temp_douyin_sets_referer_and_cookies(tmp_path, monkeypatch)
 
     assert captured["http_headers"] == {"Referer": downloader.douyin.DOUYIN_REFERER}
     assert captured["cookiefile"] == cookies_path
+
+
+def test_fetch_direct_to_temp_writes_file(tmp_path, monkeypatch):
+    def handler(request):
+        return httpx.Response(200, content=b"data")
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        downloader.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(downloader, "is_safe_public_url", lambda url: True)
+
+    path = downloader.fetch_direct_to_temp(
+        "https://cdn.example.com/v.mp4", str(tmp_path / "v.mp4"), 500
+    )
+    assert path.read_bytes() == b"data"
+
+
+def test_fetch_direct_to_temp_rejects_unsafe_url(tmp_path, monkeypatch):
+    monkeypatch.setattr(downloader, "is_safe_public_url", lambda url: False)
+    with pytest.raises(downloader.DownloadError):
+        downloader.fetch_direct_to_temp(
+            "http://127.0.0.1/x", str(tmp_path / "v.mp4"), 500
+        )
+
+
+def test_fetch_direct_to_temp_enforces_max_size(tmp_path, monkeypatch):
+    def handler(request):
+        return httpx.Response(200, content=b"x" * 2048)
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        downloader.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(downloader, "is_safe_public_url", lambda url: True)
+    dest = tmp_path / "v.mp4"
+    with pytest.raises(downloader.DownloadError):
+        downloader.fetch_direct_to_temp("https://cdn.example.com/v.mp4", str(dest), 0)
+    assert not dest.exists()
 
 
 def test_cleanup_stale_removes_old_files(tmp_path):

@@ -3,9 +3,11 @@ import shutil
 import time
 from pathlib import Path
 
+import httpx
 import yt_dlp
 
 from . import douyin
+from .http_safe import redirect_target
 from .security import is_safe_public_url
 
 
@@ -58,6 +60,53 @@ def download_to_temp(
         path.unlink(missing_ok=True)
         raise DownloadError(f"视频超过 {max_filesize_mb} MB 限制")
     return path, title
+
+
+def fetch_direct_to_temp(
+    url: str,
+    dest_path: str,
+    max_filesize_mb: int = 500,
+    headers: dict | None = None,
+    timeout: float = 30.0,
+) -> Path:
+    max_bytes = max_filesize_mb * 1024 * 1024
+    dest = Path(dest_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    current = url
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            for _ in range(6):
+                if not is_safe_public_url(current):
+                    raise DownloadError("不支持的链接")
+                with client.stream(
+                    "GET",
+                    current,
+                    headers=headers or {},
+                    follow_redirects=False,
+                ) as response:
+                    target = redirect_target(response, current)
+                    if target is not None:
+                        current = target
+                        continue
+                    if response.status_code not in (200, 206):
+                        raise DownloadError(f"直链下载失败:HTTP {response.status_code}")
+                    size = 0
+                    with open(dest, "wb") as file:
+                        for chunk in response.iter_bytes(65536):
+                            size += len(chunk)
+                            if size > max_bytes:
+                                raise DownloadError(
+                                    f"视频超过 {max_filesize_mb} MB 限制"
+                                )
+                            file.write(chunk)
+                    return dest
+        raise DownloadError("直链重定向过多")
+    except DownloadError:
+        dest.unlink(missing_ok=True)
+        raise
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        dest.unlink(missing_ok=True)
+        raise DownloadError(f"直链下载失败:{exc}") from exc
 
 
 def cleanup_file(path) -> None:

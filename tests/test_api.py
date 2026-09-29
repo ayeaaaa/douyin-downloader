@@ -14,6 +14,7 @@ def make_client(tmp_path, **overrides):
         max_filesize_mb=overrides.get("max_filesize_mb", 500),
         cookies_path=str(tmp_path / "cookies.txt"),
         temp_dir=str(tmp_path),
+        cache_ttl_seconds=overrides.get("cache_ttl_seconds", 900),
     )
     return TestClient(create_app(settings))
 
@@ -195,6 +196,134 @@ def test_parse_rejects_too_large_body(tmp_path):
     client = make_client(tmp_path)
     response = client.post("/api/parse", json={"text": "a" * 70000})
     assert response.status_code == 413
+
+
+def test_parse_uses_cache(tmp_path, monkeypatch):
+    calls = {"count": 0}
+
+    def fake_parse(url, cookies_path=None):
+        calls["count"] += 1
+        return {
+            "url": url,
+            "ok": True,
+            "title": "t",
+            "author": "",
+            "cover": "",
+            "duration": 0,
+            "direct_url": None,
+            "direct_ok": False,
+            "error": None,
+        }
+
+    monkeypatch.setattr(extractor, "parse_url", fake_parse)
+    client = make_client(tmp_path)
+    body = {"text": "https://v.douyin.com/a/"}
+    assert client.post("/api/parse", json=body).status_code == 200
+    assert client.post("/api/parse", json=body).status_code == 200
+    assert calls["count"] == 1
+
+
+def test_parse_cache_ttl_zero_always_reparses(tmp_path, monkeypatch):
+    calls = {"count": 0}
+
+    def fake_parse(url, cookies_path=None):
+        calls["count"] += 1
+        return {
+            "url": url,
+            "ok": True,
+            "title": "t",
+            "author": "",
+            "cover": "",
+            "duration": 0,
+            "direct_url": None,
+            "direct_ok": False,
+            "error": None,
+        }
+
+    monkeypatch.setattr(extractor, "parse_url", fake_parse)
+    client = make_client(tmp_path, cache_ttl_seconds=0)
+    body = {"text": "https://v.douyin.com/a/"}
+    client.post("/api/parse", json=body)
+    client.post("/api/parse", json=body)
+    assert calls["count"] == 2
+
+
+def test_download_prefers_cached_direct_url(tmp_path, monkeypatch):
+    calls = {"direct": 0, "ytdlp": 0}
+
+    def fake_parse(url, cookies_path=None):
+        return {
+            "url": url,
+            "ok": True,
+            "title": "标题",
+            "author": "",
+            "cover": "",
+            "duration": 0,
+            "direct_url": "https://cdn.example.com/v.mp4",
+            "direct_ok": True,
+            "error": None,
+        }
+
+    def fake_fetch(direct_url, dest_path, max_filesize_mb=500, headers=None):
+        calls["direct"] += 1
+        path = Path(dest_path)
+        path.write_bytes(b"direct-bytes")
+        return path
+
+    def fake_download(url, dest_dir, cookies_path=None, max_filesize_mb=500):
+        calls["ytdlp"] += 1
+        path = Path(dest_dir) / "video.mp4"
+        path.write_bytes(b"ytdlp-bytes")
+        return path, "标题"
+
+    monkeypatch.setattr(extractor, "parse_url", fake_parse)
+    monkeypatch.setattr(downloader, "fetch_direct_to_temp", fake_fetch)
+    monkeypatch.setattr(downloader, "download_to_temp", fake_download)
+
+    client = make_client(tmp_path)
+    client.post("/api/parse", json={"text": "https://v.douyin.com/a/"})
+    response = client.get("/api/download", params={"url": "https://v.douyin.com/a/"})
+    assert response.status_code == 200
+    assert response.content == b"direct-bytes"
+    assert calls == {"direct": 1, "ytdlp": 0}
+
+
+def test_download_falls_back_when_direct_fails(tmp_path, monkeypatch):
+    calls = {"direct": 0, "ytdlp": 0}
+
+    def fake_parse(url, cookies_path=None):
+        return {
+            "url": url,
+            "ok": True,
+            "title": "标题",
+            "author": "",
+            "cover": "",
+            "duration": 0,
+            "direct_url": "https://cdn.example.com/v.mp4",
+            "direct_ok": True,
+            "error": None,
+        }
+
+    def fake_fetch(direct_url, dest_path, max_filesize_mb=500, headers=None):
+        calls["direct"] += 1
+        raise downloader.DownloadError("boom")
+
+    def fake_download(url, dest_dir, cookies_path=None, max_filesize_mb=500):
+        calls["ytdlp"] += 1
+        path = Path(dest_dir) / "video.mp4"
+        path.write_bytes(b"ytdlp-bytes")
+        return path, "标题"
+
+    monkeypatch.setattr(extractor, "parse_url", fake_parse)
+    monkeypatch.setattr(downloader, "fetch_direct_to_temp", fake_fetch)
+    monkeypatch.setattr(downloader, "download_to_temp", fake_download)
+
+    client = make_client(tmp_path)
+    client.post("/api/parse", json={"text": "https://v.douyin.com/a/"})
+    response = client.get("/api/download", params={"url": "https://v.douyin.com/a/"})
+    assert response.status_code == 200
+    assert response.content == b"ytdlp-bytes"
+    assert calls == {"direct": 1, "ytdlp": 1}
 
 
 def test_parse_handles_concurrent_requests(tmp_path, monkeypatch):

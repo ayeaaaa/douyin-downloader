@@ -26,9 +26,14 @@ def extract_urls(text: str) -> list[str]:
     return urls
 
 
-def humanize_error(exc: Exception) -> str:
+def humanize_error(exc: Exception, url: str | None = None) -> str:
     lowered = str(exc).lower()
     if "login" in lowered or "cookie" in lowered or "sign in" in lowered:
+        if url and douyin.is_douyin_url(url):
+            return (
+                "抖音风控临时拦截(非登录问题):请 1-2 分钟后重试;"
+                "持续失败请导出浏览器 cookies.txt 到 data/ 目录"
+            )
         return "需要登录,请配置 cookies.txt"
     if "unsupported url" in lowered:
         return "不支持的链接"
@@ -118,7 +123,7 @@ def parse_url(url: str, cookies_path: str | None = None, probe: bool = True) -> 
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as exc:
-        result["error"] = humanize_error(exc)
+        result["error"] = humanize_error(exc, url)
         return result
 
     if info.get("_type") == "playlist":

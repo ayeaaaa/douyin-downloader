@@ -151,7 +151,10 @@ def test_parse_url_error_isolated(monkeypatch):
     result = extractor.parse_url("https://v.douyin.com/x/")
 
     assert result["ok"] is False
-    assert result["error"] == "需要登录,请配置 cookies.txt"
+    assert result["error"] == (
+        "抖音风控临时拦截(非登录问题):请 1-2 分钟后重试;"
+        "持续失败请导出浏览器 cookies.txt 到 data/ 目录"
+    )
 
 
 def test_parse_url_rejects_unsafe_url(monkeypatch):
@@ -197,6 +200,15 @@ def test_probe_direct_rejects_redirect_to_private(monkeypatch):
         lambda url: not url.startswith("http://127.0.0.1"),
     )
     assert extractor.probe_direct("https://cdn.example.com/video", {}) is False
+
+
+def test_humanize_error_douyin_risk_control():
+    error = Exception(
+        "ERROR: [Douyin] 123: Fresh cookies (not necessarily logged in) are needed"
+    )
+    message = extractor.humanize_error(error, "https://v.douyin.com/x/")
+    assert "风控" in message
+    assert extractor.humanize_error(error) == "需要登录,请配置 cookies.txt"
 
 
 def test_parse_url_douyin_sets_referer_and_cookies(tmp_path, monkeypatch):
