@@ -46,10 +46,13 @@ def _is_public_ip(ip_text: str) -> bool:
 
 
 def is_safe_public_url(url: str) -> bool:
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return False
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
         return False
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
     try:
         infos = socket.getaddrinfo(parsed.hostname, port)
     except socket.gaierror:
@@ -58,7 +61,10 @@ def is_safe_public_url(url: str) -> bool:
 
 
 def is_allowed_cover_url(url: str) -> bool:
-    host = (urlparse(url).hostname or "").lower()
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
     if not host:
         return False
     allowed = any(

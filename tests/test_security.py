@@ -34,6 +34,14 @@ def test_safe_public_url_rejects_private_and_bad_scheme():
     assert not is_safe_public_url("http://192.168.1.10/a")
 
 
+def test_safe_public_url_rejects_malformed_ipv6():
+    assert is_safe_public_url("http://[::1") is False
+
+
+def test_safe_public_url_rejects_invalid_port():
+    assert is_safe_public_url("http://example.com:abc/") is False
+
+
 def test_safe_public_url_accepts_public(monkeypatch):
     monkeypatch.setattr(
         socket,
@@ -56,6 +64,10 @@ def test_allowed_cover_url(monkeypatch):
     assert is_allowed_cover_url("https://p3-sign.douyinpic.com/a.jpg")
     assert not is_allowed_cover_url("https://evil.com/a.jpg")
     assert not is_allowed_cover_url("https://douyin.com.evil.com/a.jpg")
+
+
+def test_allowed_cover_url_rejects_invalid_port():
+    assert is_allowed_cover_url("https://p3-sign.douyinpic.com:abc/a.jpg") is False
 
 
 def test_basic_auth_middleware():
