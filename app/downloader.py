@@ -1,4 +1,5 @@
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -75,3 +76,7 @@ def cleanup_stale(dest_dir: str, max_age_seconds: int = 3600) -> None:
                 item.unlink()
         except OSError:
             pass
+
+
+def cleanup_dir(path) -> None:
+    shutil.rmtree(path, ignore_errors=True)
