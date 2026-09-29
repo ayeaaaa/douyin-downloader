@@ -55,7 +55,7 @@ def is_safe_public_url(url: str) -> bool:
         return False
     try:
         infos = socket.getaddrinfo(parsed.hostname, port)
-    except socket.gaierror:
+    except (OSError, ValueError):
         return False
     return all(_is_public_ip(info[4][0]) for info in infos)
 

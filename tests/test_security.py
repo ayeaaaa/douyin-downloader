@@ -42,6 +42,10 @@ def test_safe_public_url_rejects_invalid_port():
     assert is_safe_public_url("http://example.com:abc/") is False
 
 
+def test_safe_public_url_rejects_invalid_idna_hostname():
+    assert is_safe_public_url("http://" + "ü" * 60 + ".com/") is False
+
+
 def test_safe_public_url_accepts_public(monkeypatch):
     monkeypatch.setattr(
         socket,
@@ -68,6 +72,13 @@ def test_allowed_cover_url(monkeypatch):
 
 def test_allowed_cover_url_rejects_invalid_port():
     assert is_allowed_cover_url("https://p3-sign.douyinpic.com:abc/a.jpg") is False
+
+
+def test_allowed_cover_url_rejects_invalid_idna_hostname():
+    assert (
+        is_allowed_cover_url("https://" + "ü" * 60 + ".com.douyinpic.com/a.jpg")
+        is False
+    )
 
 
 def test_basic_auth_middleware():
