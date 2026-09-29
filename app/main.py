@@ -174,7 +174,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             media_type=response.headers.get("content-type", "image/jpeg"),
         )
 
-    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="site")
     return app
 
 

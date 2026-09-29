@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>视频下载站</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <h1>视频下载站</h1>
+      <p class="sub">粘贴抖音链接或分享文案，一键保存到本地</p>
+    </header>
+    <section class="panel">
+      <textarea id="input" rows="4" placeholder="粘贴链接或整段分享文案，可一次粘贴多条"></textarea>
+      <div class="actions">
+        <button id="parse-btn" class="primary">解析</button>
+        <span id="status" class="status"></span>
+      </div>
+    </section>
+    <section id="results" class="results"></section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
