@@ -20,6 +20,21 @@
       </div>
     </section>
     <section id="results" class="results"></section>
+    <details class="panel cookie-panel">
+      <summary>Cookie 设置</summary>
+      <div class="cookie-body">
+        <p id="cookie-status" class="status"></p>
+        <textarea id="cookie-input" rows="5" placeholder="粘贴 Netscape 格式的 cookies.txt 内容"></textarea>
+        <div class="actions">
+          <input type="file" id="cookie-file" accept=".txt" hidden>
+          <button id="cookie-pick">选择文件</button>
+          <button id="cookie-save" class="primary">保存</button>
+          <button id="cookie-clear">清除(恢复自动)</button>
+          <span id="cookie-msg" class="status"></span>
+        </div>
+        <p class="hint">Cookie 仅保存在服务器 data/cookies.txt（权限 600），页面不会回显内容。公网部署请设置 ACCESS_PASSWORD。</p>
+      </div>
+    </details>
   </main>
   <script src="/static/app.js"></script>
 </body>

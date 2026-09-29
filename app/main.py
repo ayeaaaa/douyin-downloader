@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from . import cookies as cookies_store
 from . import downloader, extractor
 from .http_safe import safe_get_async
 from .security import BasicAuthMiddleware, is_allowed_cover_url, sanitize_filename
@@ -101,18 +102,24 @@ def _cache_set(cache: dict, key: str, value, ttl_seconds: int) -> None:
 
 
 class BodySizeLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, max_bytes: int):
+    def __init__(self, app, max_bytes: int, cookie_max_bytes: int):
         super().__init__(app)
         self.max_bytes = max_bytes
+        self.cookie_max_bytes = cookie_max_bytes
 
     async def dispatch(self, request, call_next):
+        limit = (
+            self.cookie_max_bytes
+            if request.url.path == "/api/cookies"
+            else self.max_bytes
+        )
         content_length = request.headers.get("content-length")
         if content_length:
             try:
                 length = int(content_length)
             except ValueError:
                 length = 0
-            if length > self.max_bytes:
+            if length > limit:
                 return JSONResponse({"error": "请求体过大"}, status_code=413)
         return await call_next(request)
 
@@ -126,7 +133,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.download_semaphore = asyncio.Semaphore(1)
     app.state.parse_semaphore = asyncio.Semaphore(2)
     app.state.parse_cache = {}
-    app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_BODY_BYTES)
+    app.add_middleware(
+        BodySizeLimitMiddleware,
+        max_bytes=MAX_BODY_BYTES,
+        cookie_max_bytes=cookies_store.MAX_COOKIE_BYTES + 4096,
+    )
 
     if settings.access_password:
         app.add_middleware(BasicAuthMiddleware, password=settings.access_password)
@@ -248,6 +259,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             content=response.content,
             media_type=response.headers.get("content-type", "image/jpeg"),
         )
+
+    @app.get("/api/cookies/status")
+    async def api_cookies_status():
+        return cookies_store.cookie_status(settings.cookies_path)
+
+    @app.post("/api/cookies")
+    async def api_cookies_save(payload: dict):
+        content = (payload or {}).get("content") or ""
+        try:
+            status = await asyncio.to_thread(
+                cookies_store.write_cookies, settings.cookies_path, content
+            )
+        except cookies_store.CookieError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        app.state.parse_cache.clear()
+        return status
+
+    @app.delete("/api/cookies")
+    async def api_cookies_clear():
+        try:
+            await asyncio.to_thread(cookies_store.clear_cookies, settings.cookies_path)
+        except cookies_store.CookieError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=500)
+        app.state.parse_cache.clear()
+        return {"configured": False, "entries": 0, "updated_at": None}
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="site")

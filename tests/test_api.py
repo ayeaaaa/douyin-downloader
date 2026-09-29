@@ -358,3 +358,76 @@ def test_parse_handles_concurrent_requests(tmp_path, monkeypatch):
 
     responses = asyncio.run(run())
     assert [response.status_code for response in responses] == [200, 200]
+
+
+def test_cookies_status_unconfigured(tmp_path):
+    client = make_client(tmp_path)
+    response = client.get("/api/cookies/status")
+    assert response.status_code == 200
+    assert response.json()["configured"] is False
+
+
+def test_cookies_save_and_clear(tmp_path):
+    client = make_client(tmp_path)
+    content = (
+        "# Netscape HTTP Cookie File\n.douyin.com\tTRUE\t/\tFALSE\t0\tttwid\tabc\n"
+    )
+    response = client.post("/api/cookies", json={"content": content})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["configured"] is True
+    assert data["entries"] == 1
+    assert isinstance(data["updated_at"], int)
+    assert (tmp_path / "cookies.txt").is_file()
+
+    response = client.delete("/api/cookies")
+    assert response.status_code == 200
+    assert response.json()["configured"] is False
+    assert not (tmp_path / "cookies.txt").exists()
+
+
+def test_cookies_save_rejects_bad_format(tmp_path):
+    client = make_client(tmp_path)
+    response = client.post("/api/cookies", json={"content": "hello"})
+    assert response.status_code == 400
+
+
+def test_cookies_save_rejects_too_large_body(tmp_path):
+    client = make_client(tmp_path)
+    response = client.post("/api/cookies", json={"content": "x" * (1024 * 1024 + 8192)})
+    assert response.status_code == 413
+
+
+def test_cookies_save_clears_parse_cache(tmp_path, monkeypatch):
+    calls = {"count": 0}
+
+    def fake_parse(url, cookies_path=None):
+        calls["count"] += 1
+        return {
+            "url": url,
+            "ok": True,
+            "title": "t",
+            "author": "",
+            "cover": "",
+            "duration": 0,
+            "direct_url": None,
+            "direct_ok": False,
+            "error": None,
+        }
+
+    monkeypatch.setattr(extractor, "parse_url", fake_parse)
+    client = make_client(tmp_path)
+    body = {"text": "https://v.douyin.com/a/"}
+    client.post("/api/parse", json=body)
+    content = (
+        "# Netscape HTTP Cookie File\n.douyin.com\tTRUE\t/\tFALSE\t0\tttwid\tabc\n"
+    )
+    client.post("/api/cookies", json={"content": content})
+    client.post("/api/parse", json=body)
+    assert calls["count"] == 2
+
+
+def test_cookies_status_requires_auth(tmp_path):
+    client = make_client(tmp_path, access_password="secret")
+    assert client.get("/api/cookies/status").status_code == 401
+    assert client.get("/api/cookies/status", auth=("u", "secret")).status_code == 200

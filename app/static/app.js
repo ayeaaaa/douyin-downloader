@@ -125,3 +125,77 @@ $("parse-btn").addEventListener("click", parse);
 $("input").addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") parse();
 });
+
+async function loadCookieStatus() {
+  try {
+    const resp = await fetch("/api/cookies/status");
+    if (!resp.ok) return;
+    renderCookieStatus(await resp.json());
+  } catch (err) {
+    // ignore
+  }
+}
+
+function renderCookieStatus(data) {
+  const node = $("cookie-status");
+  if (!data.configured) {
+    node.textContent = "当前未配置 cookie（抖音自动申请匿名 ttwid）";
+    return;
+  }
+  const when = data.updated_at
+    ? new Date(data.updated_at * 1000).toLocaleString()
+    : "未知";
+  node.textContent = `已配置：${data.entries} 条，更新时间 ${when}`;
+}
+
+async function saveCookies() {
+  const content = $("cookie-input").value;
+  if (!content.trim()) {
+    $("cookie-msg").textContent = "请先粘贴 cookie 内容";
+    return;
+  }
+  try {
+    const resp = await fetch("/api/cookies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      $("cookie-msg").textContent = data.error || "保存失败";
+      return;
+    }
+    $("cookie-msg").textContent = "已保存";
+    $("cookie-input").value = "";
+    renderCookieStatus(data);
+  } catch (err) {
+    $("cookie-msg").textContent = "网络错误，请重试";
+  }
+}
+
+async function clearCookies() {
+  try {
+    const resp = await fetch("/api/cookies", { method: "DELETE" });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      $("cookie-msg").textContent = data.error || "清除失败";
+      return;
+    }
+    $("cookie-msg").textContent = "已清除，将自动申请匿名 ttwid";
+    renderCookieStatus(data);
+  } catch (err) {
+    $("cookie-msg").textContent = "网络错误，请重试";
+  }
+}
+
+$("cookie-pick").addEventListener("click", () => $("cookie-file").click());
+$("cookie-file").addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  $("cookie-input").value = await file.text();
+  $("cookie-msg").textContent = "已读入文件，点击保存生效";
+  event.target.value = "";
+});
+$("cookie-save").addEventListener("click", saveCookies);
+$("cookie-clear").addEventListener("click", clearCookies);
+loadCookieStatus();
