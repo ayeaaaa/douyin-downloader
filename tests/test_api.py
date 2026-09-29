@@ -5,7 +5,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from app import downloader, extractor
-from app.main import Settings, create_app, _stream_file
+from app.main import Settings, create_app, _RelayResponse
 
 
 def make_client(tmp_path, **overrides):
@@ -127,41 +127,65 @@ def test_download_returns_429_when_busy(tmp_path):
     assert response.status_code == 429
 
 
-def test_stream_file_releases_and_cleans(tmp_path):
-    job_dir = tmp_path / "job-1"
+def test_relay_response_cleans_after_full_stream(tmp_path):
+    job_dir = tmp_path / "job-full"
     job_dir.mkdir()
     path = job_dir / "video.mp4"
     path.write_bytes(b"data")
     semaphore = asyncio.Semaphore(1)
+    response = _RelayResponse(
+        path, str(job_dir), semaphore, media_type="video/mp4", headers={}
+    )
 
     async def run():
         await semaphore.acquire()
-        chunks = []
-        async for chunk in _stream_file(path, str(job_dir), semaphore):
-            chunks.append(chunk)
-        return chunks, semaphore.locked()
+        messages = []
 
-    chunks, locked = asyncio.run(run())
-    assert b"".join(chunks) == b"data"
+        async def receive():
+            await asyncio.sleep(0)
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            messages.append(message)
+
+        scope = {"type": "http", "method": "GET", "path": "/x", "headers": []}
+        await response(scope, receive, send)
+        return messages, semaphore.locked()
+
+    messages, locked = asyncio.run(run())
+    body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    assert body == b"data"
     assert not job_dir.exists()
     assert locked is False
 
 
-def test_stream_file_early_close_releases(tmp_path):
-    job_dir = tmp_path / "job-2"
+def test_relay_response_releases_on_immediate_disconnect(tmp_path):
+    job_dir = tmp_path / "job-disc"
     job_dir.mkdir()
     path = job_dir / "video.mp4"
     path.write_bytes(b"data")
     semaphore = asyncio.Semaphore(1)
+    response = _RelayResponse(
+        path, str(job_dir), semaphore, media_type="video/mp4", headers={}
+    )
 
     async def run():
         await semaphore.acquire()
-        generator = _stream_file(path, str(job_dir), semaphore)
-        first = await generator.__anext__()
-        await generator.aclose()
-        return first, semaphore.locked()
 
-    first, locked = asyncio.run(run())
-    assert first == b"data"
+        async def receive():
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            pass
+
+        scope = {"type": "http", "method": "GET", "path": "/x", "headers": []}
+        await response(scope, receive, send)
+        return semaphore.locked()
+
+    locked = asyncio.run(run())
     assert not job_dir.exists()
     assert locked is False

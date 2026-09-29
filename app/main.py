@@ -35,22 +35,47 @@ class Settings:
         )
 
 
-async def _stream_file(
-    path: Path,
-    job_dir: str,
-    semaphore: asyncio.Semaphore,
-    chunk_size: int = 65536,
-):
-    try:
-        with open(path, "rb") as file:
-            while True:
-                chunk = file.read(chunk_size)
-                if not chunk:
-                    break
-                yield chunk
-    finally:
-        downloader.cleanup_dir(job_dir)
-        semaphore.release()
+async def _file_chunks(path: Path, chunk_size: int = 65536):
+    with open(path, "rb") as file:
+        while True:
+            chunk = file.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+
+class _RelayResponse(StreamingResponse):
+    def __init__(
+        self,
+        path: Path,
+        job_dir: str,
+        semaphore: asyncio.Semaphore,
+        media_type: str,
+        headers: dict,
+    ):
+        super().__init__(_file_chunks(path), media_type=media_type, headers=headers)
+        self._job_dir = job_dir
+        self._semaphore = semaphore
+        self._released = False
+
+    def _release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        downloader.cleanup_dir(self._job_dir)
+        self._semaphore.release()
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            aclose = getattr(self.body_iterator, "aclose", None)
+            if aclose is not None:
+                try:
+                    await aclose()
+                except Exception:
+                    pass
+            self._release()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -114,8 +139,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     {"error": extractor.humanize_error(exc)}, status_code=502
                 )
             filename = sanitize_filename(title) + path.suffix
-            response = StreamingResponse(
-                _stream_file(path, job_dir, semaphore),
+            response = _RelayResponse(
+                path,
+                job_dir,
+                semaphore,
                 media_type="video/mp4",
                 headers={
                     "Content-Disposition": "attachment; filename*=utf-8''"
