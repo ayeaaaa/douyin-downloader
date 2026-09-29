@@ -107,6 +107,9 @@ def fetch_direct_to_temp(
     except (httpx.HTTPError, httpx.InvalidURL) as exc:
         dest.unlink(missing_ok=True)
         raise DownloadError(f"直链下载失败:{exc}") from exc
+    except OSError as exc:
+        dest.unlink(missing_ok=True)
+        raise DownloadError(f"直链写入失败:{exc}") from exc
 
 
 def cleanup_file(path) -> None:

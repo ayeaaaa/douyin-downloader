@@ -135,6 +135,67 @@ def test_fetch_direct_to_temp_enforces_max_size(tmp_path, monkeypatch):
     assert not dest.exists()
 
 
+def test_fetch_direct_to_temp_follows_valid_redirect(tmp_path, monkeypatch):
+    def handler(request):
+        if request.url.path == "/a":
+            return httpx.Response(302, headers={"location": "/b"})
+        return httpx.Response(200, content=b"data")
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        downloader.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(downloader, "is_safe_public_url", lambda url: True)
+
+    path = downloader.fetch_direct_to_temp(
+        "https://cdn.example.com/a", str(tmp_path / "v.mp4"), 500
+    )
+    assert path.read_bytes() == b"data"
+
+
+def test_fetch_direct_to_temp_rejects_private_redirect(tmp_path, monkeypatch):
+    def handler(request):
+        if request.url.host == "cdn.example.com":
+            return httpx.Response(302, headers={"location": "http://127.0.0.1/secret"})
+        return httpx.Response(200, content=b"secret")
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        downloader.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(
+        downloader,
+        "is_safe_public_url",
+        lambda url: not url.startswith("http://127.0.0.1"),
+    )
+    dest = tmp_path / "v.mp4"
+    with pytest.raises(downloader.DownloadError):
+        downloader.fetch_direct_to_temp("https://cdn.example.com/a", str(dest), 500)
+    assert not dest.exists()
+
+
+def test_fetch_direct_to_temp_rejects_redirect_loop(tmp_path, monkeypatch):
+    def handler(request):
+        return httpx.Response(302, headers={"location": "/loop"})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        downloader.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(downloader, "is_safe_public_url", lambda url: True)
+
+    with pytest.raises(downloader.DownloadError):
+        downloader.fetch_direct_to_temp(
+            "https://cdn.example.com/a", str(tmp_path / "v.mp4"), 500
+        )
+
+
 def test_cleanup_stale_removes_old_files(tmp_path):
     old = tmp_path / "old.mp4"
     old.write_bytes(b"x")
