@@ -65,13 +65,23 @@ def test_ensure_cookies_returns_none_without_path():
     assert douyin.ensure_cookies(None) is None
 
 
+def test_ensure_cookies_returns_none_on_unwritable_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(douyin, "fetch_ttwid", lambda: "tok123")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x", encoding="utf-8")
+    assert douyin.ensure_cookies(str(blocker / "cookies.txt")) is None
+
+
 def test_apply_douyin_options_adds_referer_and_cookies(tmp_path, monkeypatch):
     monkeypatch.setattr(douyin, "fetch_ttwid", lambda: "tok123")
-    options = {}
+    options = {"http_headers": {"X-Test": "1"}}
     douyin.apply_douyin_options(
         options, "https://v.douyin.com/x/", str(tmp_path / "cookies.txt")
     )
-    assert options["http_headers"] == {"Referer": douyin.DOUYIN_REFERER}
+    assert options["http_headers"] == {
+        "X-Test": "1",
+        "Referer": douyin.DOUYIN_REFERER,
+    }
     assert options["cookiefile"] == str(tmp_path / "cookies.txt")
 
 
@@ -79,3 +89,9 @@ def test_apply_douyin_options_ignores_other_platforms():
     options = {}
     douyin.apply_douyin_options(options, "https://example.com/x", "/tmp/x.txt")
     assert options == {}
+
+
+def test_apply_douyin_options_creates_no_file_for_other_platforms(tmp_path):
+    path = tmp_path / "cookies.txt"
+    douyin.apply_douyin_options({}, "https://example.com/x", str(path))
+    assert not path.exists()

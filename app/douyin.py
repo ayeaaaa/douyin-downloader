@@ -1,4 +1,5 @@
 import os
+import tempfile
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -54,11 +55,25 @@ def ensure_cookies(cookies_path: str | None) -> str | None:
     )
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = path.with_name(path.name + ".tmp")
-        temp_path.write_text(content, encoding="utf-8")
-        os.replace(temp_path, path)
+        temp_fd, temp_name = tempfile.mkstemp(
+            dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+        )
     except OSError:
         return None
+    try:
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as file:
+            file.write(content)
+        try:
+            os.link(temp_name, path)
+        except FileExistsError:
+            return str(path)
+    except OSError:
+        return None
+    finally:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
     return str(path)
 
 
@@ -68,4 +83,4 @@ def apply_douyin_options(options: dict, url: str, cookies_path: str | None) -> N
     cookie_file = ensure_cookies(cookies_path)
     if cookie_file:
         options["cookiefile"] = cookie_file
-    options["http_headers"] = {"Referer": DOUYIN_REFERER}
+    options.setdefault("http_headers", {})["Referer"] = DOUYIN_REFERER
