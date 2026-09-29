@@ -32,7 +32,9 @@ def test_safe_get_sync_rejects_unsafe_redirect(monkeypatch):
     _allow_only(monkeypatch, "example.com")
 
     def handler(request):
-        return httpx.Response(302, headers={"location": "http://127.0.0.1/secret"})
+        if request.url.host == "example.com":
+            return httpx.Response(302, headers={"location": "http://127.0.0.1/secret"})
+        return httpx.Response(200, content=b"secret")
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         response = http_safe.safe_get_sync(client, "https://example.com/a")
@@ -71,7 +73,9 @@ def test_safe_get_async_rejects_unsafe_redirect(monkeypatch):
     _allow_only(monkeypatch, "example.com")
 
     def handler(request):
-        return httpx.Response(302, headers={"location": "http://192.168.1.1/x"})
+        if request.url.host == "example.com":
+            return httpx.Response(302, headers={"location": "http://192.168.1.1/x"})
+        return httpx.Response(200, content=b"secret")
 
     async def run():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:

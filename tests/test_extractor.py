@@ -181,7 +181,9 @@ def test_probe_direct_follows_redirect_and_returns_true(monkeypatch):
 
 def test_probe_direct_rejects_redirect_to_private(monkeypatch):
     def handler(request):
-        return httpx.Response(302, headers={"location": "http://127.0.0.1/secret"})
+        if request.url.host == "cdn.example.com":
+            return httpx.Response(302, headers={"location": "http://127.0.0.1/secret"})
+        return httpx.Response(200, content=b"secret")
 
     real_client = httpx.Client
     monkeypatch.setattr(
