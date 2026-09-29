@@ -197,3 +197,56 @@ def test_probe_direct_rejects_redirect_to_private(monkeypatch):
         lambda url: not url.startswith("http://127.0.0.1"),
     )
     assert extractor.probe_direct("https://cdn.example.com/video", {}) is False
+
+
+def test_parse_url_douyin_sets_referer_and_cookies(tmp_path, monkeypatch):
+    captured = {}
+
+    class FakeYDL:
+        def __init__(self, opts):
+            captured.update(opts)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=False):
+            return {"title": "t", "formats": []}
+
+    monkeypatch.setattr(extractor.yt_dlp, "YoutubeDL", FakeYDL)
+    monkeypatch.setattr(extractor, "is_safe_public_url", lambda url: True)
+    monkeypatch.setattr(extractor.douyin, "fetch_ttwid", lambda: "tok123")
+    cookies_path = str(tmp_path / "cookies.txt")
+
+    result = extractor.parse_url("https://v.douyin.com/x/", cookies_path)
+
+    assert result["ok"] is True
+    assert captured["http_headers"] == {"Referer": extractor.douyin.DOUYIN_REFERER}
+    assert captured["cookiefile"] == cookies_path
+
+
+def test_parse_url_other_platform_has_no_referer(monkeypatch):
+    captured = {}
+
+    class FakeYDL:
+        def __init__(self, opts):
+            captured.update(opts)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=False):
+            return {"title": "t", "formats": []}
+
+    monkeypatch.setattr(extractor.yt_dlp, "YoutubeDL", FakeYDL)
+    monkeypatch.setattr(extractor, "is_safe_public_url", lambda url: True)
+
+    extractor.parse_url("https://example.com/v")
+
+    assert "http_headers" not in captured
+    assert "cookiefile" not in captured

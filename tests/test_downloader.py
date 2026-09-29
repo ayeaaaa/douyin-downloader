@@ -62,6 +62,35 @@ def test_download_to_temp_enforces_max_size(tmp_path, monkeypatch):
     assert not (tmp_path / "big.mp4").exists()
 
 
+def test_download_to_temp_douyin_sets_referer_and_cookies(tmp_path, monkeypatch):
+    captured = {}
+
+    class FakeYDL:
+        def __init__(self, opts):
+            captured.update(opts)
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=True):
+            Path(self.opts["outtmpl"]).parent.joinpath("1.mp4").write_bytes(b"x")
+            return {"title": "t"}
+
+    monkeypatch.setattr(downloader.yt_dlp, "YoutubeDL", FakeYDL)
+    monkeypatch.setattr(downloader, "is_safe_public_url", lambda url: True)
+    monkeypatch.setattr(downloader.douyin, "fetch_ttwid", lambda: "tok123")
+    cookies_path = str(tmp_path / "cookies.txt")
+
+    downloader.download_to_temp("https://v.douyin.com/x/", str(tmp_path), cookies_path)
+
+    assert captured["http_headers"] == {"Referer": downloader.douyin.DOUYIN_REFERER}
+    assert captured["cookiefile"] == cookies_path
+
+
 def test_cleanup_stale_removes_old_files(tmp_path):
     old = tmp_path / "old.mp4"
     old.write_bytes(b"x")

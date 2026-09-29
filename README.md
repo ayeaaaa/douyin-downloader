@@ -33,6 +33,9 @@ docker compose restart
 
 未配置 cookie 时，需要登录的视频会提示「需要登录,请配置 cookies.txt」。
 
+抖音链接无需手动配置：容器会自动申请匿名 `ttwid` cookie（无需登录/浏览器），并自动附加 Referer。
+如果你自行放入 `data/cookies.txt`（浏览器导出，可含登录态），则优先使用你的文件，可用于需要登录或更高清的视频。
+
 ## 更新
 
 站点结构变化导致解析失败时，重新构建以更新 yt-dlp：

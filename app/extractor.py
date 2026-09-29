@@ -4,6 +4,7 @@ import re
 import httpx
 import yt_dlp
 
+from . import douyin
 from .http_safe import redirect_target
 from .security import is_safe_public_url
 
@@ -111,6 +112,7 @@ def parse_url(url: str, cookies_path: str | None = None, probe: bool = True) -> 
     }
     if cookies_path and os.path.isfile(cookies_path):
         options["cookiefile"] = cookies_path
+    douyin.apply_douyin_options(options, url, cookies_path)
 
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
