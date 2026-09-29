@@ -1,9 +1,11 @@
+import asyncio
 from pathlib import Path
 
+import httpx
 from fastapi.testclient import TestClient
 
 from app import downloader, extractor
-from app.main import Settings, create_app
+from app.main import Settings, create_app, _stream_file
 
 
 def make_client(tmp_path, **overrides):
@@ -102,3 +104,64 @@ def test_auth_enabled(tmp_path):
     assert (
         client.get("/api/cover", params=params, auth=("u", "secret")).status_code == 400
     )
+
+
+def test_download_returns_429_when_busy(tmp_path):
+    client = make_client(tmp_path)
+    semaphore = client.app.state.download_semaphore
+
+    async def run():
+        await semaphore.acquire()
+        try:
+            transport = httpx.ASGITransport(app=client.app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as http:
+                return await http.get(
+                    "/api/download", params={"url": "https://v.douyin.com/a/"}
+                )
+        finally:
+            semaphore.release()
+
+    response = asyncio.run(run())
+    assert response.status_code == 429
+
+
+def test_stream_file_releases_and_cleans(tmp_path):
+    job_dir = tmp_path / "job-1"
+    job_dir.mkdir()
+    path = job_dir / "video.mp4"
+    path.write_bytes(b"data")
+    semaphore = asyncio.Semaphore(1)
+
+    async def run():
+        await semaphore.acquire()
+        chunks = []
+        async for chunk in _stream_file(path, str(job_dir), semaphore):
+            chunks.append(chunk)
+        return chunks, semaphore.locked()
+
+    chunks, locked = asyncio.run(run())
+    assert b"".join(chunks) == b"data"
+    assert not job_dir.exists()
+    assert locked is False
+
+
+def test_stream_file_early_close_releases(tmp_path):
+    job_dir = tmp_path / "job-2"
+    job_dir.mkdir()
+    path = job_dir / "video.mp4"
+    path.write_bytes(b"data")
+    semaphore = asyncio.Semaphore(1)
+
+    async def run():
+        await semaphore.acquire()
+        generator = _stream_file(path, str(job_dir), semaphore)
+        first = await generator.__anext__()
+        await generator.aclose()
+        return first, semaphore.locked()
+
+    first, locked = asyncio.run(run())
+    assert first == b"data"
+    assert not job_dir.exists()
+    assert locked is False

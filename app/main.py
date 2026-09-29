@@ -3,12 +3,12 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, Query
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.background import BackgroundTask
 
 from . import downloader, extractor
 from .http_safe import safe_get_async
@@ -33,6 +33,24 @@ class Settings:
             cookies_path=os.environ.get("COOKIES_PATH", "/data/cookies.txt"),
             temp_dir=os.environ.get("TEMP_DIR", DEFAULT_TEMP_DIR),
         )
+
+
+async def _stream_file(
+    path: Path,
+    job_dir: str,
+    semaphore: asyncio.Semaphore,
+    chunk_size: int = 65536,
+):
+    try:
+        with open(path, "rb") as file:
+            while True:
+                chunk = file.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+    finally:
+        downloader.cleanup_dir(job_dir)
+        semaphore.release()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -78,6 +96,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(
                 {"error": "已有下载任务进行中,请稍后重试"}, status_code=429
             )
+
+        job_dir = None
+        handed_off = False
         try:
             job_dir = tempfile.mkdtemp(dir=settings.temp_dir, prefix="job-")
             try:
@@ -89,19 +110,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     settings.max_filesize_mb,
                 )
             except downloader.DownloadError as exc:
-                downloader.cleanup_dir(job_dir)
                 return JSONResponse(
                     {"error": extractor.humanize_error(exc)}, status_code=502
                 )
             filename = sanitize_filename(title) + path.suffix
-            return FileResponse(
-                path,
+            response = StreamingResponse(
+                _stream_file(path, job_dir, semaphore),
                 media_type="video/mp4",
-                filename=filename,
-                background=BackgroundTask(downloader.cleanup_dir, job_dir),
+                headers={
+                    "Content-Disposition": "attachment; filename*=utf-8''"
+                    + quote(filename),
+                    "Content-Length": str(path.stat().st_size),
+                },
             )
+            handed_off = True
+            return response
         finally:
-            semaphore.release()
+            if not handed_off:
+                if job_dir is not None:
+                    downloader.cleanup_dir(job_dir)
+                semaphore.release()
 
     @app.get("/api/cover")
     async def api_cover(url: str = Query(...)):

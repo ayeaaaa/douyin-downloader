@@ -67,3 +67,11 @@ def test_cleanup_stale_removes_old_files(tmp_path):
     old.write_bytes(b"x")
     downloader.cleanup_stale(str(tmp_path), max_age_seconds=0)
     assert not old.exists()
+
+
+def test_cleanup_stale_removes_old_dirs(tmp_path):
+    old_dir = tmp_path / "job-old"
+    old_dir.mkdir()
+    (old_dir / "video.mp4").write_bytes(b"x")
+    downloader.cleanup_stale(str(tmp_path), max_age_seconds=0)
+    assert not old_dir.exists()

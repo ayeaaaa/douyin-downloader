@@ -72,7 +72,11 @@ def cleanup_stale(dest_dir: str, max_age_seconds: int = 3600) -> None:
     now = time.time()
     for item in root.iterdir():
         try:
-            if item.is_file() and now - item.stat().st_mtime > max_age_seconds:
+            if now - item.stat().st_mtime <= max_age_seconds:
+                continue
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            elif item.is_file():
                 item.unlink()
         except OSError:
             pass
