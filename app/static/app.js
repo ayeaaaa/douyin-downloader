@@ -33,6 +33,158 @@ function serverDownload(url) {
   window.location.href = "/api/download?url=" + encodeURIComponent(url);
 }
 
+function mediaUrl(url) {
+  return "/api/media?url=" + encodeURIComponent(url);
+}
+
+function mediaDownloadUrl(url, name) {
+  return (
+    "/api/media?download=1&name=" +
+    encodeURIComponent(name) +
+    "&url=" +
+    encodeURIComponent(url)
+  );
+}
+
+function itemName(media) {
+  const prefix =
+    { image: "image", clip: "clip", music: "music" }[media.kind] || "file";
+  const ext =
+    media.kind === "clip" ? "mp4" : media.kind === "music" ? "mp3" : "webp";
+  return `${prefix}-${String(media.index).padStart(2, "0")}.${ext}`;
+}
+
+function openPreview(media) {
+  const overlay = $("preview-overlay");
+  const content = $("preview-content");
+  content.replaceChildren();
+  if (media.kind === "music") {
+    const audio = document.createElement("audio");
+    audio.controls = true;
+    audio.src = mediaUrl(media.preview_url);
+    content.append(audio);
+  } else if (media.kind === "clip") {
+    const video = document.createElement("video");
+    video.controls = true;
+    video.poster = mediaUrl(media.preview_url);
+    video.src = mediaUrl(media.download_url);
+    content.append(video);
+  } else {
+    const img = el("img", "preview-img");
+    img.src = mediaUrl(media.preview_url);
+    img.alt = "图片预览";
+    content.append(img);
+  }
+  const link = $("preview-download");
+  link.href = mediaDownloadUrl(media.download_url, itemName(media));
+  link.setAttribute("download", itemName(media));
+  overlay.classList.remove("hidden");
+}
+
+function renderSlidesCard(item) {
+  const card = el("article", "card slides-card");
+  const body = el("div", "card-body");
+  body.append(el("div", "card-title", item.title || "图文帖子"));
+  const meta = [item.author, platformOf(item.url)].filter(Boolean).join(" · ");
+  body.append(el("div", "meta", meta));
+
+  const toolbar = el("div", "card-actions");
+  const selectAllLabel = el("label", "check");
+  const selectAll = document.createElement("input");
+  selectAll.type = "checkbox";
+  selectAllLabel.append(selectAll, document.createTextNode("全选"));
+  const zipButton = el("button", "primary", "打包下载选中");
+  const status = el("span", "status", "");
+  toolbar.append(selectAllLabel, zipButton, status);
+
+  const grid = el("div", "media-grid");
+  const boxes = [];
+  item.items.forEach((media) => {
+    const cell = el("div", "media-cell");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.dataset.url = media.download_url;
+    checkbox.dataset.kind = media.kind;
+    checkbox.dataset.index = String(media.index);
+    boxes.push(checkbox);
+
+    const thumb = el("button", "thumb");
+    thumb.type = "button";
+    if (media.kind === "music") {
+      thumb.classList.add("music-thumb");
+      thumb.textContent = "🎵";
+    } else {
+      const img = el("img", "thumb-img");
+      img.loading = "lazy";
+      img.src = mediaUrl(media.preview_url);
+      img.alt = media.kind === "clip" ? "视频片段" : "图片";
+      thumb.append(img);
+      if (media.kind === "clip") {
+        thumb.append(el("span", "play-badge", "▶"));
+      }
+    }
+    thumb.onclick = () => openPreview(media);
+
+    const download = document.createElement("a");
+    download.className = "button-like";
+    download.href = mediaDownloadUrl(media.download_url, itemName(media));
+    download.setAttribute("download", itemName(media));
+    download.textContent = "下载";
+
+    cell.append(checkbox, thumb, download);
+    grid.append(cell);
+  });
+
+  selectAll.onchange = () => {
+    boxes.forEach((box) => {
+      box.checked = selectAll.checked;
+    });
+  };
+
+  zipButton.onclick = async () => {
+    const selected = boxes.filter((box) => box.checked);
+    if (!selected.length) {
+      status.textContent = "请先勾选要下载的内容";
+      return;
+    }
+    status.textContent = "打包中…";
+    try {
+      const resp = await fetch("/api/slides/zip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: item.title || "图文",
+          items: selected.map((box) => ({
+            url: box.dataset.url,
+            kind: box.dataset.kind,
+            index: Number(box.dataset.index),
+          })),
+        }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        status.textContent = data.error || "打包失败";
+        return;
+      }
+      const blob = await resp.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = (item.title || "图文") + "_图文.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+      status.textContent = "打包完成";
+    } catch (err) {
+      status.textContent = "网络错误，请重试";
+    }
+  };
+
+  body.append(toolbar, grid);
+  card.append(body);
+  return card;
+}
+
 function renderCard(item) {
   const card = el("article", "card");
   if (!item.ok) {
@@ -40,6 +192,10 @@ function renderCard(item) {
     card.append(el("div", "card-title", item.url));
     card.append(el("div", "error", item.error || "解析失败"));
     return card;
+  }
+
+  if (item.media_type === "slides") {
+    return renderSlidesCard(item);
   }
 
   const cover = el("img", "cover");
@@ -198,4 +354,18 @@ $("cookie-file").addEventListener("change", async (event) => {
 });
 $("cookie-save").addEventListener("click", saveCookies);
 $("cookie-clear").addEventListener("click", clearCookies);
+
+$("preview-close").addEventListener("click", () =>
+  $("preview-overlay").classList.add("hidden")
+);
+$("preview-overlay").addEventListener("click", (event) => {
+  if (event.target === $("preview-overlay")) {
+    $("preview-overlay").classList.add("hidden");
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    $("preview-overlay").classList.add("hidden");
+  }
+});
 loadCookieStatus();
