@@ -8,6 +8,7 @@ from starlette.testclient import TestClient
 from app.security import (
     BasicAuthMiddleware,
     is_allowed_cover_url,
+    is_allowed_media_url,
     is_safe_public_url,
     sanitize_filename,
 )
@@ -80,6 +81,21 @@ def test_allowed_cover_url_rejects_invalid_idna_hostname():
         is_allowed_cover_url("https://" + "ü" * 60 + ".com.douyinpic.com/a.jpg")
         is False
     )
+
+
+def test_allowed_media_url(monkeypatch):
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ],
+    )
+    assert is_allowed_media_url("https://v26-web.douyinvod.com/video/x.mp4")
+    assert is_allowed_media_url("https://p3-sign.douyinpic.com/a.webp")
+    assert is_allowed_media_url("https://sf6-cdn-tos.douyinstatic.com/obj/x.mp3")
+    assert not is_allowed_media_url("https://evil.com/a.mp4")
+    assert not is_allowed_media_url("https://douyinvod.com.evil.com/a.mp4")
 
 
 def test_basic_auth_middleware():

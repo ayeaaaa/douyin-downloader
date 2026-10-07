@@ -74,6 +74,33 @@ def is_allowed_cover_url(url: str) -> bool:
     return allowed and is_safe_public_url(url)
 
 
+ALLOWED_MEDIA_SUFFIXES = (
+    "douyin.com",
+    "iesdouyin.com",
+    "douyinpic.com",
+    "douyinvod.com",
+    "douyinstatic.com",
+    "byteimg.com",
+    "ibytedtos.com",
+    "bytecdntp.com",
+    "zjcdn.com",
+    "snssdk.com",
+    "amemv.com",
+    "365yg.com",
+)
+
+
+def is_allowed_media_url(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    if not host:
+        return False
+    allowed = any(
+        host == suffix or host.endswith("." + suffix)
+        for suffix in ALLOWED_MEDIA_SUFFIXES
+    )
+    return allowed and is_safe_public_url(url)
+
+
 class BasicAuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, password: str):
         super().__init__(app)

@@ -275,3 +275,60 @@ def test_humanize_error_douyin_slides():
 def test_humanize_error_douyin_note():
     error = Exception("ERROR: Unsupported URL: https://www.douyin.com/note/123")
     assert extractor.humanize_error(error) == "这是图文/幻灯片帖子,暂不支持下载"
+
+
+def test_parse_url_slides_fallback(monkeypatch):
+    class FakeYDL:
+        def __init__(self, opts):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=False):
+            raise RuntimeError(
+                "Unsupported URL: https://www.iesdouyin.com/share/slides/123/"
+            )
+
+    slides_result = {
+        "url": "https://v.douyin.com/x/",
+        "ok": True,
+        "media_type": "slides",
+        "items": [],
+    }
+    monkeypatch.setattr(extractor.yt_dlp, "YoutubeDL", FakeYDL)
+    monkeypatch.setattr(extractor, "is_safe_public_url", lambda url: True)
+    monkeypatch.setattr(
+        extractor.douyin,
+        "resolve_douyin_url",
+        lambda url: "https://www.iesdouyin.com/share/slides/123/",
+    )
+    monkeypatch.setattr(
+        extractor.douyin,
+        "extract_slides",
+        lambda aweme_id, cookies_path, source_url: slides_result,
+    )
+    assert extractor.parse_url("https://v.douyin.com/x/") is slides_result
+
+
+def test_parse_url_video_has_media_type(monkeypatch):
+    class FakeYDL:
+        def __init__(self, opts):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=False):
+            return {"title": "t", "formats": []}
+
+    monkeypatch.setattr(extractor.yt_dlp, "YoutubeDL", FakeYDL)
+    monkeypatch.setattr(extractor, "is_safe_public_url", lambda url: True)
+    result = extractor.parse_url("https://example.com/v")
+    assert result["media_type"] == "video"

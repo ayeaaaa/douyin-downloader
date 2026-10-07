@@ -14,7 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import cookies as cookies_store
 from . import downloader, extractor
-from .http_safe import safe_get_async
+from .http_safe import BROWSER_UA, safe_get_async
 from .security import BasicAuthMiddleware, is_allowed_cover_url, sanitize_filename
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -205,7 +205,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         direct_url,
                         str(Path(job_dir) / "direct.mp4"),
                         settings.max_filesize_mb,
-                        {"User-Agent": extractor.BROWSER_UA},
+                        {"User-Agent": BROWSER_UA},
                     )
                     title = cached.get("title") or "video"
                 except downloader.DownloadError:

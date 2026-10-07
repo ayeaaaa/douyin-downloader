@@ -5,7 +5,7 @@ import httpx
 import yt_dlp
 
 from . import douyin
-from .http_safe import redirect_target
+from .http_safe import BROWSER_UA, redirect_target
 from .security import is_safe_public_url
 
 URL_RE = re.compile(
@@ -64,12 +64,6 @@ def pick_direct_format(info: dict) -> tuple[str | None, dict]:
     return best["url"], headers
 
 
-BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-)
-
-
 def probe_direct(url: str, headers: dict, timeout: float = 10.0) -> bool:
     request_headers = {"User-Agent": BROWSER_UA}
     request_headers.update({k: v for k, v in headers.items() if k.lower() != "referer"})
@@ -94,9 +88,18 @@ def probe_direct(url: str, headers: dict, timeout: float = 10.0) -> bool:
         return False
 
 
+def _try_slides(url: str, cookies_path: str | None) -> dict | None:
+    final_url = douyin.resolve_douyin_url(url)
+    match = douyin.SLIDES_URL_RE.search(final_url)
+    if not match:
+        return None
+    return douyin.extract_slides(match.group("id"), cookies_path, url)
+
+
 def parse_url(url: str, cookies_path: str | None = None, probe: bool = True) -> dict:
     result = {
         "url": url,
+        "media_type": "video",
         "ok": False,
         "title": "",
         "author": "",
@@ -125,6 +128,10 @@ def parse_url(url: str, cookies_path: str | None = None, probe: bool = True) -> 
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=False)
     except Exception as exc:
+        if douyin.is_douyin_url(url) and "unsupported url" in str(exc).lower():
+            slides_result = _try_slides(url, cookies_path)
+            if slides_result is not None:
+                return slides_result
         result["error"] = humanize_error(exc, url)
         return result
 

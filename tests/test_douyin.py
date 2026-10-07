@@ -95,3 +95,163 @@ def test_apply_douyin_options_creates_no_file_for_other_platforms(tmp_path):
     path = tmp_path / "cookies.txt"
     douyin.apply_douyin_options({}, "https://example.com/x", str(path))
     assert not path.exists()
+
+
+def test_load_cookie_dict_parses_netscape(tmp_path):
+    path = tmp_path / "cookies.txt"
+    path.write_text(
+        "# Netscape HTTP Cookie File\n"
+        ".douyin.com\tTRUE\t/\tFALSE\t0\tttwid\tabc\n"
+        "#HttpOnly_.douyin.com\tTRUE\t/\tFALSE\t0\tsid\txyz\n",
+        encoding="utf-8",
+    )
+    assert douyin.load_cookie_dict(str(path)) == {"ttwid": "abc", "sid": "xyz"}
+
+
+def test_load_cookie_dict_missing_file(tmp_path):
+    assert douyin.load_cookie_dict(str(tmp_path / "none.txt")) == {}
+
+
+def test_build_slides_items_maps_images_clips_music():
+    detail = {
+        "images": [
+            {
+                "url_list": ["https://img/1.webp"],
+                "download_url_list": ["https://img/1-orig.webp"],
+            },
+            {
+                "url_list": ["https://img/2.webp"],
+                "video": {"play_addr": {"url_list": ["https://v/2.mp4"]}},
+            },
+        ],
+        "music": {"play_url": {"uri": "https://m/bgm.mp3"}},
+    }
+    assert douyin.build_slides_items(detail) == [
+        {
+            "kind": "image",
+            "index": 1,
+            "preview_url": "https://img/1.webp",
+            "download_url": "https://img/1-orig.webp",
+        },
+        {
+            "kind": "clip",
+            "index": 2,
+            "preview_url": "https://img/2.webp",
+            "download_url": "https://v/2.mp4",
+        },
+        {
+            "kind": "music",
+            "index": 1,
+            "preview_url": "https://m/bgm.mp3",
+            "download_url": "https://m/bgm.mp3",
+        },
+    ]
+
+
+def test_build_slides_items_skips_empty_images():
+    detail = {"images": [{"url_list": []}, {"url_list": ["https://img/2.webp"]}]}
+    items = douyin.build_slides_items(detail)
+    assert [item["kind"] for item in items] == ["image"]
+    assert items[0]["index"] == 2
+
+
+def test_extract_slides_success(monkeypatch, tmp_path):
+    monkeypatch.setattr(douyin, "ensure_cookies", lambda path: None)
+    monkeypatch.setattr(douyin, "load_cookie_dict", lambda path: {})
+
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "aweme_detail": {
+                    "desc": "图文标题",
+                    "author": {"nickname": "作者"},
+                    "images": [
+                        {
+                            "url_list": ["https://img/1.webp"],
+                            "download_url_list": ["https://img/1o.webp"],
+                        }
+                    ],
+                    "music": {"play_url": {"uri": "https://m/bgm.mp3"}},
+                }
+            },
+        )
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        douyin.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    result = douyin.extract_slides(
+        "123", str(tmp_path / "cookies.txt"), "https://v.douyin.com/x/"
+    )
+    assert result["ok"] is True
+    assert result["media_type"] == "slides"
+    assert result["title"] == "图文标题"
+    assert result["author"] == "作者"
+    assert result["cover"] == "https://img/1.webp"
+    assert len(result["items"]) == 2
+
+
+def test_extract_slides_risk_control(monkeypatch):
+    monkeypatch.setattr(douyin, "ensure_cookies", lambda path: None)
+    monkeypatch.setattr(douyin, "load_cookie_dict", lambda path: {})
+
+    def handler(request):
+        return httpx.Response(403, text="Blocked by ArgusSecurityPlugin")
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        douyin.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    result = douyin.extract_slides("123", None, "https://v.douyin.com/x/")
+    assert result["ok"] is False
+    assert "风控" in result["error"]
+
+
+def test_resolve_douyin_url_follows_redirect(monkeypatch):
+    def handler(request):
+        if request.url.host == "v.douyin.com":
+            return httpx.Response(
+                302,
+                headers={"location": "https://www.iesdouyin.com/share/slides/123/"},
+            )
+        return httpx.Response(200, content=b"<html></html>")
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        douyin.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(douyin, "is_safe_public_url", lambda url: True)
+    assert (
+        douyin.resolve_douyin_url("https://v.douyin.com/x/")
+        == "https://www.iesdouyin.com/share/slides/123/"
+    )
+
+
+def test_resolve_douyin_url_rejects_private_redirect(monkeypatch):
+    def handler(request):
+        if request.url.host == "v.douyin.com":
+            return httpx.Response(302, headers={"location": "http://127.0.0.1/x"})
+        return httpx.Response(200, content=b"x")
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        douyin.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    monkeypatch.setattr(
+        douyin,
+        "is_safe_public_url",
+        lambda url: not url.startswith("http://127.0.0.1"),
+    )
+    assert (
+        douyin.resolve_douyin_url("https://v.douyin.com/x/")
+        == "https://v.douyin.com/x/"
+    )

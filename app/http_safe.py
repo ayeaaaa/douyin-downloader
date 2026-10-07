@@ -4,6 +4,11 @@ from .security import is_safe_public_url
 
 REDIRECT_STATUSES = (301, 302, 303, 307, 308)
 
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
 
 def redirect_target(response: httpx.Response, current_url: str) -> str | None:
     if response.status_code not in REDIRECT_STATUSES:
