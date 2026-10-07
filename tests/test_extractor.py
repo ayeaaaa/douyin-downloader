@@ -262,3 +262,16 @@ def test_parse_url_other_platform_has_no_referer(monkeypatch):
 
     assert "http_headers" not in captured
     assert "cookiefile" not in captured
+
+
+def test_humanize_error_douyin_slides():
+    error = Exception(
+        "ERROR: Unsupported URL: https://www.iesdouyin.com/share/slides/123/"
+        "?is_slides=1"
+    )
+    assert extractor.humanize_error(error) == "这是图文/幻灯片帖子,暂不支持下载"
+
+
+def test_humanize_error_douyin_note():
+    error = Exception("ERROR: Unsupported URL: https://www.douyin.com/note/123")
+    assert extractor.humanize_error(error) == "这是图文/幻灯片帖子,暂不支持下载"

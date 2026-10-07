@@ -28,6 +28,8 @@ def extract_urls(text: str) -> list[str]:
 
 def humanize_error(exc: Exception, url: str | None = None) -> str:
     lowered = str(exc).lower()
+    if "share/slides" in lowered or "is_slides" in lowered or "/note/" in lowered:
+        return "这是图文/幻灯片帖子,暂不支持下载"
     if "login" in lowered or "cookie" in lowered or "sign in" in lowered:
         if url and douyin.is_douyin_url(url):
             return (
