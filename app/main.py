@@ -116,8 +116,11 @@ class _MediaResponse(StreamingResponse):
 
 async def _media_chunks(upstream):
     try:
-        async for chunk in upstream.aiter_bytes(65536):
-            yield chunk
+        if getattr(upstream, "_content", None) is not None:
+            yield upstream._content
+        else:
+            async for chunk in upstream.aiter_raw(65536):
+                yield chunk
     finally:
         try:
             await upstream.aclose()
@@ -334,30 +337,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers["Range"] = range_header
         client = httpx.AsyncClient(timeout=30)
         try:
-            response = await open_safe_stream(client, url, headers)
+            response = await open_safe_stream(
+                client, url, headers, validator=is_allowed_media_url
+            )
         except (httpx.HTTPError, httpx.InvalidURL):
             await client.aclose()
             return JSONResponse({"error": "媒体获取失败"}, status_code=502)
         if response is None:
             await client.aclose()
             return JSONResponse({"error": "不允许的媒体地址"}, status_code=400)
-        if response.status_code not in (200, 206):
+        if response.status_code not in (200, 206, 416):
             status = response.status_code
             await response.aclose()
             await client.aclose()
             return JSONResponse(
                 {"error": f"媒体获取失败:HTTP {status}"}, status_code=502
             )
+        if response.status_code in (200, 206):
+            content_type = response.headers.get("content-type", "")
+            base_type = content_type.split(";")[0].strip().lower()
+            if not (
+                base_type.startswith("image/")
+                or base_type.startswith("video/")
+                or base_type.startswith("audio/")
+                or base_type == "application/octet-stream"
+            ):
+                await response.aclose()
+                await client.aclose()
+                return JSONResponse({"error": "不允许的媒体类型"}, status_code=400)
         passthrough = {}
         for header in (
             "content-type",
             "content-length",
             "content-range",
             "accept-ranges",
+            "content-encoding",
         ):
             value = response.headers.get(header)
             if value:
                 passthrough[header] = value
+        passthrough["x-content-type-options"] = "nosniff"
         if download:
             filename = sanitize_filename(name) if name else ""
             if not filename or filename == "video":
@@ -404,6 +423,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     index = int(item.get("index") or 1)
                 except (TypeError, ValueError):
                     return JSONResponse({"error": "内容格式不正确"}, status_code=400)
+                if not 1 <= index <= 999:
+                    return JSONResponse({"error": "内容格式不正确"}, status_code=400)
                 dest = media_dir / _zip_name(item["kind"], index, item["url"])
                 try:
                     path = await asyncio.to_thread(
@@ -415,6 +436,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "User-Agent": BROWSER_UA,
                             "Referer": douyin.DOUYIN_REFERER,
                         },
+                        is_allowed_media_url,
                     )
                 except downloader.DownloadError as exc:
                     return JSONResponse({"error": str(exc)}, status_code=502)

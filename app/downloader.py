@@ -67,8 +67,11 @@ def fetch_direct_to_temp(
     dest_path: str,
     max_filesize_mb: int = 500,
     headers: dict | None = None,
+    validator=None,
     timeout: float = 30.0,
 ) -> Path:
+    if validator is None:
+        validator = is_safe_public_url
     max_bytes = max_filesize_mb * 1024 * 1024
     dest = Path(dest_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -76,7 +79,7 @@ def fetch_direct_to_temp(
     try:
         with httpx.Client(timeout=timeout) as client:
             for _ in range(6):
-                if not is_safe_public_url(current):
+                if not validator(current):
                     raise DownloadError("不支持的链接")
                 with client.stream(
                     "GET",

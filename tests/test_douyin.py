@@ -155,6 +155,26 @@ def test_build_slides_items_skips_empty_images():
     assert items[0]["index"] == 2
 
 
+def test_load_cookie_dict_filters_other_domains(tmp_path):
+    path = tmp_path / "cookies.txt"
+    path.write_text(
+        "# Netscape HTTP Cookie File\n"
+        ".douyin.com\tTRUE\t/\tFALSE\t0\tttwid\tabc\n"
+        ".example.com\tTRUE\t/\tFALSE\t0\tsession\tsecret\n"
+        "#HttpOnly_.iesdouyin.com\tTRUE\t/\tFALSE\t0\tsid\txyz\n",
+        encoding="utf-8",
+    )
+    assert douyin.load_cookie_dict(str(path)) == {"ttwid": "abc", "sid": "xyz"}
+
+
+def test_build_slides_items_handles_malformed_shapes():
+    detail = {
+        "images": {"not": "a list"},
+        "music": ["also", "wrong"],
+    }
+    assert douyin.build_slides_items(detail) == []
+
+
 def test_extract_slides_success(monkeypatch, tmp_path):
     monkeypatch.setattr(douyin, "ensure_cookies", lambda path: None)
     monkeypatch.setattr(douyin, "load_cookie_dict", lambda path: {})

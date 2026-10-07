@@ -99,6 +99,19 @@ def test_allowed_media_url(monkeypatch):
     assert not is_allowed_media_url("http://[::1")
 
 
+def test_safe_public_url_caches_resolution(monkeypatch):
+    calls = {"count": 0}
+
+    def fake_getaddrinfo(*args, **kwargs):
+        calls["count"] += 1
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    assert is_safe_public_url("https://cache-probe-unique.example.com/x")
+    assert is_safe_public_url("https://cache-probe-unique.example.com/y")
+    assert calls["count"] == 1
+
+
 def test_basic_auth_middleware():
     async def homepage(request):
         return PlainTextResponse("ok")

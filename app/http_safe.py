@@ -60,10 +60,13 @@ async def open_safe_stream(
     url: str,
     headers: dict | None = None,
     max_redirects: int = 5,
+    validator=None,
 ) -> httpx.Response | None:
+    if validator is None:
+        validator = is_safe_public_url
     current = url
     for _ in range(max_redirects + 1):
-        if not is_safe_public_url(current):
+        if not validator(current):
             return None
         request = client.build_request("GET", current, headers=headers)
         response = await client.send(request, stream=True)

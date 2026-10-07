@@ -467,7 +467,7 @@ def test_media_rejects_unknown_domain(tmp_path):
 
 
 def test_media_streams_content(tmp_path, monkeypatch):
-    async def fake_open(client, url, headers=None, max_redirects=5):
+    async def fake_open(client, url, headers=None, max_redirects=5, validator=None):
         return httpx.Response(
             200, content=b"media-bytes", headers={"content-type": "video/mp4"}
         )
@@ -490,7 +490,7 @@ def test_media_streams_content(tmp_path, monkeypatch):
 
 
 def test_media_download_sets_attachment(tmp_path, monkeypatch):
-    async def fake_open(client, url, headers=None, max_redirects=5):
+    async def fake_open(client, url, headers=None, max_redirects=5, validator=None):
         return httpx.Response(
             200, content=b"data", headers={"content-type": "image/webp"}
         )
@@ -517,7 +517,7 @@ def test_media_download_sets_attachment(tmp_path, monkeypatch):
 
 
 def test_media_rejects_unsafe_stream(tmp_path, monkeypatch):
-    async def fake_open(client, url, headers=None, max_redirects=5):
+    async def fake_open(client, url, headers=None, max_redirects=5, validator=None):
         return None
 
     monkeypatch.setattr(main, "open_safe_stream", fake_open)
@@ -529,7 +529,7 @@ def test_media_rejects_unsafe_stream(tmp_path, monkeypatch):
 
 
 def test_slides_zip_packages_selected_items(tmp_path, monkeypatch):
-    def fake_fetch(url, dest_path, max_filesize_mb=500, headers=None):
+    def fake_fetch(url, dest_path, max_filesize_mb=500, headers=None, validator=None):
         path = Path(dest_path)
         path.write_bytes(b"data-" + url.encode("utf-8"))
         return path
@@ -606,6 +606,51 @@ def test_slides_zip_rejects_bad_index(tmp_path):
                     "url": "https://p3-sign.douyinpic.com/a.webp",
                     "kind": "image",
                     "index": "abc",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_media_rejects_non_media_content_type(tmp_path, monkeypatch):
+    async def fake_open(client, url, headers=None, max_redirects=5, validator=None):
+        return httpx.Response(
+            200, content=b"<html></html>", headers={"content-type": "text/html"}
+        )
+
+    monkeypatch.setattr(main, "open_safe_stream", fake_open)
+    client = make_client(tmp_path)
+    response = client.get(
+        "/api/media", params={"url": "https://v26-web.douyinvod.com/a.mp4"}
+    )
+    assert response.status_code == 400
+
+
+def test_media_passes_through_416(tmp_path, monkeypatch):
+    async def fake_open(client, url, headers=None, max_redirects=5, validator=None):
+        return httpx.Response(416, headers={"content-range": "bytes */1000"})
+
+    monkeypatch.setattr(main, "open_safe_stream", fake_open)
+    client = make_client(tmp_path)
+    response = client.get(
+        "/api/media",
+        params={"url": "https://v26-web.douyinvod.com/a.mp4"},
+        headers={"Range": "bytes=5000-6000"},
+    )
+    assert response.status_code == 416
+
+
+def test_slides_zip_rejects_index_out_of_range(tmp_path):
+    client = make_client(tmp_path)
+    response = client.post(
+        "/api/slides/zip",
+        json={
+            "items": [
+                {
+                    "url": "https://p3-sign.douyinpic.com/a.webp",
+                    "kind": "image",
+                    "index": 10000,
                 }
             ]
         },

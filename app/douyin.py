@@ -119,6 +119,14 @@ def load_cookie_dict(cookies_path: str | None) -> dict[str, str]:
                     continue
                 parts = line.rstrip("\n").split("\t")
                 if len(parts) >= 7:
+                    domain = parts[0].lstrip(".").lower()
+                    if not (
+                        domain == "douyin.com"
+                        or domain.endswith(".douyin.com")
+                        or domain == "iesdouyin.com"
+                        or domain.endswith(".iesdouyin.com")
+                    ):
+                        continue
                     cookies[parts[5]] = parts[6]
     except OSError:
         return {}
@@ -149,13 +157,22 @@ def resolve_douyin_url(url: str, timeout: float = 10.0, max_redirects: int = 5) 
 
 def build_slides_items(detail: dict) -> list[dict]:
     items: list[dict] = []
-    for index, image in enumerate(detail.get("images") or [], start=1):
-        url_list = image.get("url_list") or []
+    images = detail.get("images")
+    if not isinstance(images, list):
+        images = []
+    for index, image in enumerate(images, start=1):
+        if not isinstance(image, dict):
+            continue
+        url_list = image.get("url_list")
+        if not isinstance(url_list, list):
+            url_list = []
         preview = url_list[0] if url_list else None
         if not preview:
             continue
-        clip_urls = ((image.get("video") or {}).get("play_addr") or {}).get(
-            "url_list"
+        video = image.get("video")
+        play_addr = video.get("play_addr") if isinstance(video, dict) else None
+        clip_urls = (
+            play_addr.get("url_list") if isinstance(play_addr, dict) else None
         ) or []
         if clip_urls:
             items.append(
@@ -167,7 +184,9 @@ def build_slides_items(detail: dict) -> list[dict]:
                 }
             )
             continue
-        download_list = image.get("download_url_list") or []
+        download_list = image.get("download_url_list")
+        if not isinstance(download_list, list):
+            download_list = []
         items.append(
             {
                 "kind": "image",
@@ -176,7 +195,9 @@ def build_slides_items(detail: dict) -> list[dict]:
                 "download_url": download_list[0] if download_list else preview,
             }
         )
-    music_url = ((detail.get("music") or {}).get("play_url") or {}).get("uri")
+    music = detail.get("music")
+    play_url = music.get("play_url") if isinstance(music, dict) else None
+    music_url = play_url.get("uri") if isinstance(play_url, dict) else None
     if music_url:
         items.append(
             {
@@ -236,7 +257,10 @@ def extract_slides(aweme_id: str, cookies_path: str | None, source_url: str) -> 
         return result
     result["ok"] = True
     result["title"] = detail.get("desc") or ""
-    result["author"] = (detail.get("author") or {}).get("nickname") or ""
+    author = detail.get("author")
+    result["author"] = (
+        author.get("nickname") if isinstance(author, dict) else ""
+    ) or ""
     result["cover"] = items[0].get("preview_url") or ""
     result["items"] = items
     return result
