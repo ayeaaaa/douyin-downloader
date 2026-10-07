@@ -91,7 +91,10 @@ ALLOWED_MEDIA_SUFFIXES = (
 
 
 def is_allowed_media_url(url: str) -> bool:
-    host = (urlparse(url).hostname or "").lower()
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
     if not host:
         return False
     allowed = any(

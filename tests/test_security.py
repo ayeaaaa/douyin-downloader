@@ -96,6 +96,7 @@ def test_allowed_media_url(monkeypatch):
     assert is_allowed_media_url("https://sf6-cdn-tos.douyinstatic.com/obj/x.mp3")
     assert not is_allowed_media_url("https://evil.com/a.mp4")
     assert not is_allowed_media_url("https://douyinvod.com.evil.com/a.mp4")
+    assert not is_allowed_media_url("http://[::1")
 
 
 def test_basic_auth_middleware():
