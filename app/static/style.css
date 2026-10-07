@@ -22,9 +22,24 @@ body {
 
 .page { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
 
-.hero h1 { font-size: 24px; margin: 0 0 4px; }
+.hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
 
-.hero .sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+.hero-text { min-width: 0; }
+
+.brand { display: flex; align-items: center; gap: 12px; }
+
+.brand-logo { width: 40px; height: 40px; flex: none; }
+
+.brand h1 { font-size: 24px; margin: 0; }
+
+.hero .sub { color: var(--muted); margin: 8px 0 20px; font-size: 14px; }
+
+.hero-art { width: 220px; height: auto; flex: none; }
 
 .panel {
   background: var(--panel);
@@ -120,6 +135,10 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
 
 .error { color: var(--danger); font-size: 14px; }
+
+@media (max-width: 600px) {
+  .hero-art { display: none; }
+}
 
 @media (max-width: 480px) {
   .cover { width: 84px; height: 112px; }
