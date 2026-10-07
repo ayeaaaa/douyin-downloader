@@ -1,5 +1,6 @@
 import asyncio
 import io
+import socket
 import zipfile
 from pathlib import Path
 
@@ -472,6 +473,13 @@ def test_media_streams_content(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(main, "open_safe_stream", fake_open)
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ],
+    )
     client = make_client(tmp_path)
     response = client.get(
         "/api/media", params={"url": "https://v26-web.douyinvod.com/a.mp4"}
@@ -488,6 +496,13 @@ def test_media_download_sets_attachment(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(main, "open_safe_stream", fake_open)
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ],
+    )
     client = make_client(tmp_path)
     response = client.get(
         "/api/media",
@@ -520,6 +535,13 @@ def test_slides_zip_packages_selected_items(tmp_path, monkeypatch):
         return path
 
     monkeypatch.setattr(downloader, "fetch_direct_to_temp", fake_fetch)
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ],
+    )
     client = make_client(tmp_path)
     response = client.post(
         "/api/slides/zip",
@@ -571,4 +593,21 @@ def test_slides_zip_rejects_too_many_items(tmp_path):
 def test_slides_zip_rejects_empty_items(tmp_path):
     client = make_client(tmp_path)
     response = client.post("/api/slides/zip", json={"items": []})
+    assert response.status_code == 400
+
+
+def test_slides_zip_rejects_bad_index(tmp_path):
+    client = make_client(tmp_path)
+    response = client.post(
+        "/api/slides/zip",
+        json={
+            "items": [
+                {
+                    "url": "https://p3-sign.douyinpic.com/a.webp",
+                    "kind": "image",
+                    "index": "abc",
+                }
+            ]
+        },
+    )
     assert response.status_code == 400

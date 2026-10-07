@@ -400,9 +400,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_total = settings.max_filesize_mb * 1024 * 1024
             total = 0
             for item in items:
-                dest = media_dir / _zip_name(
-                    item["kind"], int(item.get("index") or 1), item["url"]
-                )
+                try:
+                    index = int(item.get("index") or 1)
+                except (TypeError, ValueError):
+                    return JSONResponse({"error": "内容格式不正确"}, status_code=400)
+                dest = media_dir / _zip_name(item["kind"], index, item["url"])
                 try:
                     path = await asyncio.to_thread(
                         downloader.fetch_direct_to_temp,
