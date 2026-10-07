@@ -82,3 +82,21 @@ def test_safe_get_async_rejects_unsafe_redirect(monkeypatch):
             return await http_safe.safe_get_async(client, "https://example.com/a")
 
     assert asyncio.run(run()) is None
+
+
+def test_open_safe_stream_follows_valid_redirect(monkeypatch):
+    _allow_only(monkeypatch, "example.com")
+
+    def handler(request):
+        if request.url.path == "/a":
+            return httpx.Response(302, headers={"location": "/b"})
+        return httpx.Response(200, content=b"ok")
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            response = await http_safe.open_safe_stream(client, "https://example.com/a")
+            content = await response.aread()
+            await response.aclose()
+            return response.status_code, content
+
+    assert asyncio.run(run()) == (200, b"ok")

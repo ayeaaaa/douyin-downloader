@@ -53,3 +53,23 @@ async def safe_get_async(
             return response
         current = target
     return None
+
+
+async def open_safe_stream(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict | None = None,
+    max_redirects: int = 5,
+) -> httpx.Response | None:
+    current = url
+    for _ in range(max_redirects + 1):
+        if not is_safe_public_url(current):
+            return None
+        request = client.build_request("GET", current, headers=headers)
+        response = await client.send(request, stream=True)
+        target = redirect_target(response, current)
+        if target is None:
+            return response
+        await response.aclose()
+        current = target
+    return None

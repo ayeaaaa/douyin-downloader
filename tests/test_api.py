@@ -1,10 +1,12 @@
 import asyncio
+import io
+import zipfile
 from pathlib import Path
 
 import httpx
 from fastapi.testclient import TestClient
 
-from app import downloader, extractor
+from app import downloader, extractor, main
 from app.main import Settings, create_app, _RelayResponse
 
 
@@ -455,3 +457,118 @@ def test_cookies_status_requires_auth(tmp_path):
     client = make_client(tmp_path, access_password="secret")
     assert client.get("/api/cookies/status").status_code == 401
     assert client.get("/api/cookies/status", auth=("u", "secret")).status_code == 200
+
+
+def test_media_rejects_unknown_domain(tmp_path):
+    client = make_client(tmp_path)
+    response = client.get("/api/media", params={"url": "https://evil.com/a.mp4"})
+    assert response.status_code == 400
+
+
+def test_media_streams_content(tmp_path, monkeypatch):
+    async def fake_open(client, url, headers=None, max_redirects=5):
+        return httpx.Response(
+            200, content=b"media-bytes", headers={"content-type": "video/mp4"}
+        )
+
+    monkeypatch.setattr(main, "open_safe_stream", fake_open)
+    client = make_client(tmp_path)
+    response = client.get(
+        "/api/media", params={"url": "https://v26-web.douyinvod.com/a.mp4"}
+    )
+    assert response.status_code == 200
+    assert response.content == b"media-bytes"
+    assert response.headers["content-type"] == "video/mp4"
+
+
+def test_media_download_sets_attachment(tmp_path, monkeypatch):
+    async def fake_open(client, url, headers=None, max_redirects=5):
+        return httpx.Response(
+            200, content=b"data", headers={"content-type": "image/webp"}
+        )
+
+    monkeypatch.setattr(main, "open_safe_stream", fake_open)
+    client = make_client(tmp_path)
+    response = client.get(
+        "/api/media",
+        params={
+            "url": "https://p3-sign.douyinpic.com/a.webp",
+            "download": 1,
+            "name": "图片.webp",
+        },
+    )
+    assert response.status_code == 200
+    assert "filename*=utf-8''" in response.headers["content-disposition"]
+
+
+def test_media_rejects_unsafe_stream(tmp_path, monkeypatch):
+    async def fake_open(client, url, headers=None, max_redirects=5):
+        return None
+
+    monkeypatch.setattr(main, "open_safe_stream", fake_open)
+    client = make_client(tmp_path)
+    response = client.get(
+        "/api/media", params={"url": "https://v26-web.douyinvod.com/a.mp4"}
+    )
+    assert response.status_code == 400
+
+
+def test_slides_zip_packages_selected_items(tmp_path, monkeypatch):
+    def fake_fetch(url, dest_path, max_filesize_mb=500, headers=None):
+        path = Path(dest_path)
+        path.write_bytes(b"data-" + url.encode("utf-8"))
+        return path
+
+    monkeypatch.setattr(downloader, "fetch_direct_to_temp", fake_fetch)
+    client = make_client(tmp_path)
+    response = client.post(
+        "/api/slides/zip",
+        json={
+            "title": "标题",
+            "items": [
+                {
+                    "url": "https://p3-sign.douyinpic.com/a.webp",
+                    "kind": "image",
+                    "index": 1,
+                },
+                {
+                    "url": "https://v26-web.douyinvod.com/b",
+                    "kind": "clip",
+                    "index": 2,
+                },
+            ],
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    archive = zipfile.ZipFile(io.BytesIO(response.content))
+    assert sorted(archive.namelist()) == ["clip-02.mp4", "image-01.webp"]
+
+
+def test_slides_zip_rejects_unsafe_url(tmp_path):
+    client = make_client(tmp_path)
+    response = client.post(
+        "/api/slides/zip",
+        json={"items": [{"url": "https://evil.com/a", "kind": "image", "index": 1}]},
+    )
+    assert response.status_code == 400
+
+
+def test_slides_zip_rejects_too_many_items(tmp_path):
+    client = make_client(tmp_path)
+    items = [
+        {
+            "url": "https://p3-sign.douyinpic.com/a.webp",
+            "kind": "image",
+            "index": index,
+        }
+        for index in range(1, 52)
+    ]
+    response = client.post("/api/slides/zip", json={"items": items})
+    assert response.status_code == 400
+
+
+def test_slides_zip_rejects_empty_items(tmp_path):
+    client = make_client(tmp_path)
+    response = client.post("/api/slides/zip", json={"items": []})
+    assert response.status_code == 400

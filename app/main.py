@@ -2,20 +2,26 @@ import asyncio
 import os
 import tempfile
 import time
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import cookies as cookies_store
-from . import downloader, extractor
-from .http_safe import BROWSER_UA, safe_get_async
-from .security import BasicAuthMiddleware, is_allowed_cover_url, sanitize_filename
+from . import douyin, downloader, extractor
+from .http_safe import BROWSER_UA, open_safe_stream, safe_get_async
+from .security import (
+    BasicAuthMiddleware,
+    is_allowed_cover_url,
+    is_allowed_media_url,
+    sanitize_filename,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 DEFAULT_TEMP_DIR = "/tmp/douyin-dl"
@@ -84,6 +90,41 @@ class _RelayResponse(StreamingResponse):
                     pass
 
 
+class _MediaResponse(StreamingResponse):
+    def __init__(self, upstream, client, status_code, headers):
+        super().__init__(
+            _media_chunks(upstream),
+            status_code=status_code,
+            headers=headers,
+        )
+        self._upstream = upstream
+        self._client = client
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            try:
+                await self._upstream.aclose()
+            except Exception:
+                pass
+            try:
+                await self._client.aclose()
+            except Exception:
+                pass
+
+
+async def _media_chunks(upstream):
+    try:
+        async for chunk in upstream.aiter_bytes(65536):
+            yield chunk
+    finally:
+        try:
+            await upstream.aclose()
+        except Exception:
+            pass
+
+
 def _cache_get(cache: dict, key: str):
     item = cache.get(key)
     if item is None:
@@ -99,6 +140,21 @@ def _cache_set(cache: dict, key: str, value, ttl_seconds: int) -> None:
     if len(cache) >= 100:
         cache.clear()
     cache[key] = (time.monotonic() + ttl_seconds, value)
+
+
+def _zip_name(kind: str, index: int, url: str) -> str:
+    ext = Path(urlparse(url).path).suffix.lower().lstrip(".")
+    if ext not in ("webp", "jpg", "jpeg", "png", "mp4", "mp3", "m4a"):
+        ext = {"image": "webp", "clip": "mp4", "music": "mp3"}.get(kind, "bin")
+    prefix = {"image": "image", "clip": "clip", "music": "music"}.get(kind, "file")
+    return f"{prefix}-{index:02d}.{ext}"
+
+
+def _build_zip(media_dir: Path, zip_path: Path) -> None:
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as archive:
+        for file in sorted(media_dir.iterdir()):
+            if file.is_file():
+                archive.write(file, arcname=file.name)
 
 
 class BodySizeLimitMiddleware(BaseHTTPMiddleware):
@@ -259,6 +315,135 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             content=response.content,
             media_type=response.headers.get("content-type", "image/jpeg"),
         )
+
+    @app.get("/api/media")
+    async def api_media(
+        request: Request,
+        url: str = Query(...),
+        download: int = 0,
+        name: str = "",
+    ):
+        if not is_allowed_media_url(url):
+            return JSONResponse({"error": "不允许的媒体地址"}, status_code=400)
+        headers = {
+            "User-Agent": BROWSER_UA,
+            "Referer": douyin.DOUYIN_REFERER,
+        }
+        range_header = request.headers.get("range")
+        if range_header:
+            headers["Range"] = range_header
+        client = httpx.AsyncClient(timeout=30)
+        try:
+            response = await open_safe_stream(client, url, headers)
+        except (httpx.HTTPError, httpx.InvalidURL):
+            await client.aclose()
+            return JSONResponse({"error": "媒体获取失败"}, status_code=502)
+        if response is None:
+            await client.aclose()
+            return JSONResponse({"error": "不允许的媒体地址"}, status_code=400)
+        if response.status_code not in (200, 206):
+            status = response.status_code
+            await response.aclose()
+            await client.aclose()
+            return JSONResponse(
+                {"error": f"媒体获取失败:HTTP {status}"}, status_code=502
+            )
+        passthrough = {}
+        for header in (
+            "content-type",
+            "content-length",
+            "content-range",
+            "accept-ranges",
+        ):
+            value = response.headers.get(header)
+            if value:
+                passthrough[header] = value
+        if download:
+            filename = sanitize_filename(name) if name else ""
+            if not filename or filename == "video":
+                filename = sanitize_filename(Path(urlparse(url).path).name or "media")
+            passthrough["content-disposition"] = (
+                "attachment; filename*=utf-8''" + quote(filename)
+            )
+        return _MediaResponse(response, client, response.status_code, passthrough)
+
+    @app.post("/api/slides/zip")
+    async def api_slides_zip(payload: dict):
+        items = (payload or {}).get("items")
+        if not isinstance(items, list) or not items:
+            return JSONResponse({"error": "请选择要下载的内容"}, status_code=400)
+        if len(items) > 50:
+            return JSONResponse({"error": "一次最多打包 50 项"}, status_code=400)
+        for item in items:
+            if (
+                not isinstance(item, dict)
+                or item.get("kind") not in ("image", "clip", "music")
+                or not isinstance(item.get("url"), str)
+                or not is_allowed_media_url(item["url"])
+            ):
+                return JSONResponse({"error": "包含不允许的媒体地址"}, status_code=400)
+
+        semaphore = app.state.download_semaphore
+        try:
+            await asyncio.wait_for(semaphore.acquire(), timeout=0.1)
+        except asyncio.TimeoutError:
+            return JSONResponse(
+                {"error": "已有下载任务进行中,请稍后重试"}, status_code=429
+            )
+
+        job_dir = None
+        handed_off = False
+        try:
+            job_dir = tempfile.mkdtemp(dir=settings.temp_dir, prefix="zip-")
+            media_dir = Path(job_dir) / "media"
+            media_dir.mkdir()
+            max_total = settings.max_filesize_mb * 1024 * 1024
+            total = 0
+            for item in items:
+                dest = media_dir / _zip_name(
+                    item["kind"], int(item.get("index") or 1), item["url"]
+                )
+                try:
+                    path = await asyncio.to_thread(
+                        downloader.fetch_direct_to_temp,
+                        item["url"],
+                        str(dest),
+                        100,
+                        {
+                            "User-Agent": BROWSER_UA,
+                            "Referer": douyin.DOUYIN_REFERER,
+                        },
+                    )
+                except downloader.DownloadError as exc:
+                    return JSONResponse({"error": str(exc)}, status_code=502)
+                total += path.stat().st_size
+                if total > max_total:
+                    return JSONResponse(
+                        {"error": f"打包内容超过 {settings.max_filesize_mb} MB 限制"},
+                        status_code=502,
+                    )
+            zip_path = Path(job_dir) / "slides.zip"
+            await asyncio.to_thread(_build_zip, media_dir, zip_path)
+            title = (payload or {}).get("title") or "图文"
+            filename = sanitize_filename(str(title)) + "_图文.zip"
+            response = _RelayResponse(
+                zip_path,
+                job_dir,
+                semaphore,
+                media_type="application/zip",
+                headers={
+                    "Content-Disposition": "attachment; filename*=utf-8''"
+                    + quote(filename),
+                    "Content-Length": str(zip_path.stat().st_size),
+                },
+            )
+            handed_off = True
+            return response
+        finally:
+            if not handed_off:
+                if job_dir is not None:
+                    downloader.cleanup_dir(job_dir)
+                semaphore.release()
 
     @app.get("/api/cookies/status")
     async def api_cookies_status():
