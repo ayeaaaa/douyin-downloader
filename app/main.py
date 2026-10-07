@@ -353,18 +353,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(
                 {"error": f"媒体获取失败:HTTP {status}"}, status_code=502
             )
-        if response.status_code in (200, 206):
-            content_type = response.headers.get("content-type", "")
-            base_type = content_type.split(";")[0].strip().lower()
-            if not (
-                base_type.startswith("image/")
-                or base_type.startswith("video/")
-                or base_type.startswith("audio/")
-                or base_type == "application/octet-stream"
-            ):
-                await response.aclose()
-                await client.aclose()
-                return JSONResponse({"error": "不允许的媒体类型"}, status_code=400)
+        content_type = response.headers.get("content-type", "")
+        base_type = content_type.split(";")[0].strip().lower()
+        if base_type and not (
+            base_type.startswith("image/")
+            or base_type.startswith("video/")
+            or base_type.startswith("audio/")
+            or base_type == "application/octet-stream"
+        ):
+            await response.aclose()
+            await client.aclose()
+            return JSONResponse({"error": "不允许的媒体类型"}, status_code=400)
         passthrough = {}
         for header in (
             "content-type",
@@ -419,8 +418,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             max_total = settings.max_filesize_mb * 1024 * 1024
             total = 0
             for item in items:
+                raw_index = item.get("index")
+                if raw_index is None:
+                    raw_index = 1
                 try:
-                    index = int(item.get("index") or 1)
+                    index = int(raw_index)
                 except (TypeError, ValueError):
                     return JSONResponse({"error": "内容格式不正确"}, status_code=400)
                 if not 1 <= index <= 999:

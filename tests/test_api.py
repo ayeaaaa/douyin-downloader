@@ -656,3 +656,36 @@ def test_slides_zip_rejects_index_out_of_range(tmp_path):
         },
     )
     assert response.status_code == 400
+
+
+def test_media_rejects_html_on_416(tmp_path, monkeypatch):
+    async def fake_open(client, url, headers=None, max_redirects=5, validator=None):
+        return httpx.Response(
+            416, content=b"<html>pwn</html>", headers={"content-type": "text/html"}
+        )
+
+    monkeypatch.setattr(main, "open_safe_stream", fake_open)
+    client = make_client(tmp_path)
+    response = client.get(
+        "/api/media",
+        params={"url": "https://v26-web.douyinvod.com/a.mp4"},
+        headers={"Range": "bytes=5000-6000"},
+    )
+    assert response.status_code == 400
+
+
+def test_slides_zip_rejects_zero_index(tmp_path):
+    client = make_client(tmp_path)
+    response = client.post(
+        "/api/slides/zip",
+        json={
+            "items": [
+                {
+                    "url": "https://p3-sign.douyinpic.com/a.webp",
+                    "kind": "image",
+                    "index": 0,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 400

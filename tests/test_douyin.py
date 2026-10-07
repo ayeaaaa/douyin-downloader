@@ -292,3 +292,20 @@ def test_extract_slides_non_dict_json(monkeypatch):
     )
     result = douyin.extract_slides("123", None, "https://v.douyin.com/x/")
     assert result["ok"] is False
+
+
+def test_build_slides_items_handles_malformed_clip_urls():
+    detail = {
+        "images": [
+            {
+                "url_list": ["https://img/1.webp"],
+                "video": {"play_addr": {"url_list": 5}},
+            },
+            {
+                "url_list": ["https://img/2.webp"],
+                "video": {"play_addr": {"url_list": {"a": 1}}},
+            },
+        ]
+    }
+    items = douyin.build_slides_items(detail)
+    assert [item["kind"] for item in items] == ["image", "image"]

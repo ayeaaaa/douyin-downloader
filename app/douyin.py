@@ -171,9 +171,9 @@ def build_slides_items(detail: dict) -> list[dict]:
             continue
         video = image.get("video")
         play_addr = video.get("play_addr") if isinstance(video, dict) else None
-        clip_urls = (
-            play_addr.get("url_list") if isinstance(play_addr, dict) else None
-        ) or []
+        clip_urls = play_addr.get("url_list") if isinstance(play_addr, dict) else None
+        if not isinstance(clip_urls, list):
+            clip_urls = []
         if clip_urls:
             items.append(
                 {
