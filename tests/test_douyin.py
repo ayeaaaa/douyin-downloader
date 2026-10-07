@@ -255,3 +255,20 @@ def test_resolve_douyin_url_rejects_private_redirect(monkeypatch):
         douyin.resolve_douyin_url("https://v.douyin.com/x/")
         == "https://v.douyin.com/x/"
     )
+
+
+def test_extract_slides_non_dict_json(monkeypatch):
+    monkeypatch.setattr(douyin, "ensure_cookies", lambda path: None)
+    monkeypatch.setattr(douyin, "load_cookie_dict", lambda path: {})
+
+    def handler(request):
+        return httpx.Response(200, json=["not", "a", "dict"])
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        douyin.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+    result = douyin.extract_slides("123", None, "https://v.douyin.com/x/")
+    assert result["ok"] is False

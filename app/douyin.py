@@ -208,12 +208,11 @@ def extract_slides(aweme_id: str, cookies_path: str | None, source_url: str) -> 
     params = {"aweme_id": aweme_id, **DOUYIN_DETAIL_PARAMS}
     headers = {"User-Agent": BROWSER_UA, "Referer": DOUYIN_REFERER}
     try:
-        with httpx.Client(timeout=20) as client:
+        with httpx.Client(timeout=20, cookies=cookies) as client:
             response = client.get(
                 DOUYIN_DETAIL_URL,
                 params=params,
                 headers=headers,
-                cookies=cookies,
             )
     except httpx.HTTPError:
         result["error"] = "网络超时,请重试"
@@ -221,8 +220,12 @@ def extract_slides(aweme_id: str, cookies_path: str | None, source_url: str) -> 
     detail = None
     if response.status_code == 200:
         try:
-            detail = (response.json() or {}).get("aweme_detail")
+            payload = response.json() or {}
         except ValueError:
+            payload = {}
+        if isinstance(payload, dict):
+            detail = payload.get("aweme_detail")
+        if not isinstance(detail, dict):
             detail = None
     if not detail:
         result["error"] = RISK_CONTROL_ERROR
