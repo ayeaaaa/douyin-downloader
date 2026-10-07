@@ -173,7 +173,7 @@ function renderSlidesCard(item) {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      URL.revokeObjectURL(link.href);
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
       status.textContent = "打包完成";
     } catch (err) {
       status.textContent = "网络错误，请重试";
@@ -355,17 +355,20 @@ $("cookie-file").addEventListener("change", async (event) => {
 $("cookie-save").addEventListener("click", saveCookies);
 $("cookie-clear").addEventListener("click", clearCookies);
 
-$("preview-close").addEventListener("click", () =>
-  $("preview-overlay").classList.add("hidden")
-);
+function closePreview() {
+  $("preview-overlay").classList.add("hidden");
+  $("preview-content").replaceChildren();
+}
+
+$("preview-close").addEventListener("click", closePreview);
 $("preview-overlay").addEventListener("click", (event) => {
   if (event.target === $("preview-overlay")) {
-    $("preview-overlay").classList.add("hidden");
+    closePreview();
   }
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    $("preview-overlay").classList.add("hidden");
+    closePreview();
   }
 });
 loadCookieStatus();
