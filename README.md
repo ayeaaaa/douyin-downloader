@@ -3,6 +3,18 @@
 粘贴抖音链接（或整段分享文案）即可下载视频。直链可用时浏览器直连 CDN 保存；
 直链不可用时回退服务器中转下载。支持 yt-dlp 能解析的其他平台链接。
 
+## 下载安装
+
+三种使用方式任选：
+
+| 方式 | 说明 |
+| --- | --- |
+| **Windows 桌面版** | 到 [Releases](https://github.com/ayeaaaa/douyin-downloader/releases) 下载 `douyin-downloader.exe`，双击运行，浏览器自动打开 |
+| **Android 客户端** | 下载 `douyin-downloader.apk` 安装，在应用内填写服务器地址；支持从抖音「分享 → 抖音下载站」直达解析 |
+| **服务器部署** | 用 Docker 部署（见下方），多设备共用 |
+
+APK 需要配合已部署的服务器使用（桌面版或 Docker 版均可）。
+
 ## 快速开始
 
 ```bash
