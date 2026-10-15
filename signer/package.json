@@ -1,0 +1,14 @@
+{
+  "name": "douyin-signer",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pure-request Douyin web signer (a_bogus + secsdk signatures)",
+  "main": "signer.js",
+  "scripts": {
+    "build": "node build.js"
+  },
+  "dependencies": {
+    "bytenode": "^1.5.6",
+    "jsdom": "^24.1.0"
+  }
+}

@@ -5,3 +5,6 @@ tests/
 .pytest_cache/
 .env
 .git/
+signer/node_modules/
+signer/src/
+signer/sdk/

@@ -3,12 +3,13 @@ import re
 import tempfile
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import httpx
 
 from .http_safe import BROWSER_UA, redirect_target
 from .security import is_safe_public_url
+from .signer_client import get_signer
 
 DOUYIN_REFERER = "https://www.douyin.com/"
 DOUYIN_HOST_SUFFIXES = ("douyin.com", "iesdouyin.com")
@@ -91,6 +92,7 @@ def apply_douyin_options(options: dict, url: str, cookies_path: str | None) -> N
 
 
 SLIDES_URL_RE = re.compile(r"/(?:share/slides|note)/(?P<id>\d+)")
+VIDEO_URL_RE = re.compile(r"/(?:video|share/video)/(?P<id>\d+)")
 DOUYIN_DETAIL_URL = "https://www.douyin.com/aweme/v1/web/aweme/detail/"
 DOUYIN_DETAIL_PARAMS = {
     "device_platform": "webapp",
@@ -131,6 +133,60 @@ def load_cookie_dict(cookies_path: str | None) -> dict[str, str]:
     except OSError:
         return {}
     return cookies
+
+
+SIGNED_FETCH_HEADERS = {
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.douyin.com",
+    "Referer": "https://www.douyin.com/",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site",
+}
+
+
+def fetch_detail_signed(
+    aweme_id: str,
+    cookies: dict[str, str],
+    params: dict[str, str],
+    timeout: float = 20.0,
+) -> dict | None:
+    """Fetch the aweme detail through the Node signer + Firefox TLS.
+
+    Returns the parsed payload on success, ``None`` when the signer or
+    ``curl_cffi`` is unavailable or the request fails.
+    """
+    signer = get_signer()
+    if not signer.available:
+        return None
+    try:
+        from curl_cffi import requests as curl_requests
+    except ImportError:
+        return None
+    query = urlencode({"aweme_id": aweme_id, **params})
+    signed = signer.sign(f"/aweme/v1/web/aweme/detail/?{query}", cookies)
+    if not signed or not signed.get("signedUrl"):
+        return None
+    merged = dict(cookies)
+    merged.update(signed.get("cookies") or {})
+    try:
+        response = curl_requests.get(
+            signed["signedUrl"],
+            headers=SIGNED_FETCH_HEADERS,
+            cookies=merged,
+            impersonate="firefox",
+            timeout=timeout,
+        )
+    except Exception:
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def resolve_douyin_url(url: str, timeout: float = 10.0, max_redirects: int = 5) -> str:
@@ -210,6 +266,56 @@ def build_slides_items(detail: dict) -> list[dict]:
     return items
 
 
+def extract_video_signed(
+    aweme_id: str, cookies_path: str | None, source_url: str
+) -> dict | None:
+    """Parse a Douyin video via the signed detail API.
+
+    Returns a parse-result dict, or ``None`` when the signer is unavailable.
+    """
+    cookie_file = ensure_cookies(cookies_path)
+    cookies = load_cookie_dict(cookie_file)
+    payload = fetch_detail_signed(aweme_id, cookies, DOUYIN_DETAIL_PARAMS)
+    if not isinstance(payload, dict):
+        return None
+    detail = payload.get("aweme_detail")
+    if not isinstance(detail, dict):
+        return None
+    video = detail.get("video") if isinstance(detail.get("video"), dict) else {}
+    play = video.get("play_addr") if isinstance(video.get("play_addr"), dict) else {}
+    play_urls = play.get("url_list") if isinstance(play.get("url_list"), list) else []
+    direct_url = next(
+        (u for u in play_urls if isinstance(u, str) and u.startswith("http")), None
+    )
+    author = detail.get("author") if isinstance(detail.get("author"), dict) else {}
+    cover = video.get("cover") if isinstance(video.get("cover"), dict) else {}
+    cover_urls = (
+        cover.get("url_list") if isinstance(cover.get("url_list"), list) else []
+    )
+    duration = video.get("duration")
+    return {
+        "url": source_url,
+        "media_type": "video",
+        "ok": True,
+        "title": detail.get("desc") or "",
+        "author": author.get("nickname") or "",
+        "cover": cover_urls[0] if cover_urls else "",
+        "duration": int(duration // 1000) if isinstance(duration, (int, float)) else 0,
+        "direct_url": direct_url,
+        "direct_ok": False,
+        "error": None,
+    }
+
+
+def extract_video_signed_from_url(url: str, cookies_path: str | None) -> dict | None:
+    """Resolve the URL and parse the video through the signed detail API."""
+    final_url = resolve_douyin_url(url)
+    match = VIDEO_URL_RE.search(final_url) or VIDEO_URL_RE.search(url)
+    if not match:
+        return None
+    return extract_video_signed(match.group("id"), cookies_path, url)
+
+
 def extract_slides(aweme_id: str, cookies_path: str | None, source_url: str) -> dict:
     result = {
         "url": source_url,
@@ -228,26 +334,35 @@ def extract_slides(aweme_id: str, cookies_path: str | None, source_url: str) -> 
     cookies = load_cookie_dict(cookie_file)
     params = {"aweme_id": aweme_id, **DOUYIN_DETAIL_PARAMS}
     headers = {"User-Agent": BROWSER_UA, "Referer": DOUYIN_REFERER}
-    try:
-        with httpx.Client(timeout=20, cookies=cookies) as client:
-            response = client.get(
-                DOUYIN_DETAIL_URL,
-                params=params,
-                headers=headers,
-            )
-    except httpx.HTTPError:
-        result["error"] = "网络超时,请重试"
-        return result
     detail = None
-    if response.status_code == 200:
-        try:
-            payload = response.json() or {}
-        except ValueError:
-            payload = {}
-        if isinstance(payload, dict):
-            detail = payload.get("aweme_detail")
+
+    # Preferred path: Node signer (a_bogus + secsdk signatures) + Firefox TLS.
+    payload = fetch_detail_signed(aweme_id, cookies, DOUYIN_DETAIL_PARAMS)
+    if isinstance(payload, dict):
+        detail = payload.get("aweme_detail")
         if not isinstance(detail, dict):
             detail = None
+
+    if detail is None:
+        try:
+            with httpx.Client(timeout=20, cookies=cookies) as client:
+                response = client.get(
+                    DOUYIN_DETAIL_URL,
+                    params=params,
+                    headers=headers,
+                )
+        except httpx.HTTPError:
+            result["error"] = "网络超时,请重试"
+            return result
+        if response.status_code == 200:
+            try:
+                payload = response.json() or {}
+            except ValueError:
+                payload = {}
+            if isinstance(payload, dict):
+                detail = payload.get("aweme_detail")
+            if not isinstance(detail, dict):
+                detail = None
     if not detail:
         result["error"] = RISK_CONTROL_ERROR
         return result

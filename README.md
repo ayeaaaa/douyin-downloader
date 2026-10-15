@@ -22,10 +22,13 @@ docker compose up -d --build
 
 在项目目录建 `.env` 可覆盖，例如 `ACCESS_PASSWORD=yourpass`。
 
-## Cookie（可选）
+## Cookie（推荐导出浏览器 cookies）
 
-部分视频需要登录才能解析或获取高清。用浏览器插件（如 Get cookies.txt LOCALLY）
-导出 douyin.com 的 Netscape 格式 cookie，保存为 `data/cookies.txt`，重启容器即可：
+抖音详情接口有风控校验（`a_bogus` / `uifid` / `x-secsdk-web-signature` 等签名）。
+本项目内置 Node 签名服务（`signer/`），配合 Firefox TLS 指纹请求可纯请求通过风控，
+但需要 cookies 里包含浏览器生成的 `UIFID_TEMP`（设备指纹）。用浏览器插件（如
+Get cookies.txt LOCALLY）导出 douyin.com 的 Netscape 格式 cookie，保存为
+`data/cookies.txt`，重启容器即可：
 
 ```bash
 docker compose restart

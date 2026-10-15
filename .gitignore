@@ -5,3 +5,7 @@ __pycache__/
 .env
 data/*
 !data/.gitkeep
+signer/node_modules/
+signer/node_modules/
+signer/sdk/
+signer/src/

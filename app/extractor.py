@@ -113,6 +113,25 @@ def parse_url(url: str, cookies_path: str | None = None, probe: bool = True) -> 
         result["error"] = "不支持的链接"
         return result
 
+    # 图文/幻灯片帖子直接走签名详情接口(比 yt-dlp 存根结果更完整)
+    if douyin.is_douyin_url(url):
+        slides_match = douyin.SLIDES_URL_RE.search(url)
+        if slides_match:
+            slides_result = douyin.extract_slides(
+                slides_match.group("id"), cookies_path, url
+            )
+            if slides_result.get("ok"):
+                return slides_result
+
+    # 抖音视频同样优先走签名详情接口(yt-dlp 无法生成 a_bogus 签名,风控下会失败)
+    if douyin.is_douyin_url(url):
+        video_result = douyin.extract_video_signed_from_url(url, cookies_path)
+        if video_result and video_result.get("ok"):
+            direct_url = video_result.get("direct_url")
+            if direct_url:
+                video_result["direct_ok"] = probe_direct(direct_url, {})
+            return video_result
+
     options = {
         "quiet": True,
         "no_warnings": True,
