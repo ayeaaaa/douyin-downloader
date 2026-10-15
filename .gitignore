@@ -6,6 +6,18 @@ __pycache__/
 data/*
 !data/.gitkeep
 signer/node_modules/
-signer/node_modules/
 signer/sdk/
 signer/src/
+
+# desktop build (PyInstaller)
+/build/
+/dist/
+/node/
+
+# android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.keystore
+*.jks

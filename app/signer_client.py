@@ -17,11 +17,44 @@ import os
 import select
 import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
 SIGNER_DIR = Path(__file__).resolve().parent.parent / "signer"
 SIGNER_SCRIPT = SIGNER_DIR / "signer.js"
+
+
+def _bundled_base() -> Path | None:
+    """PyInstaller extraction dir, when running from a frozen bundle."""
+    base = getattr(sys, "_MEIPASS", None)
+    return Path(base) if base else None
+
+
+def _resolve_node(node_bin: str | None = None) -> str:
+    """Locate the Node binary: explicit arg > env > bundled > PATH."""
+    if node_bin:
+        return node_bin
+    env_bin = os.environ.get("SIGNER_NODE_BIN")
+    if env_bin:
+        return env_bin
+    base = _bundled_base()
+    if base:
+        for name in ("node.exe", "node"):
+            candidate = base / "node" / name
+            if candidate.is_file():
+                return str(candidate)
+    return "node"
+
+
+def _resolve_signer_dir() -> Path:
+    """Locate the signer directory: bundled first, then repo layout."""
+    base = _bundled_base()
+    if base:
+        bundled = base / "signer"
+        if (bundled / "signer.js").is_file():
+            return bundled
+    return SIGNER_DIR
 
 
 class SignerError(RuntimeError):
@@ -32,7 +65,7 @@ class DouyinSigner:
     """Manages a persistent ``node signer.js`` subprocess."""
 
     def __init__(self, node_bin: str | None = None, timeout: float = 30.0) -> None:
-        self._node = node_bin or os.environ.get("SIGNER_NODE_BIN") or "node"
+        self._node = _resolve_node(node_bin)
         self._timeout = timeout
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
@@ -40,18 +73,23 @@ class DouyinSigner:
 
     @property
     def available(self) -> bool:
-        if not SIGNER_SCRIPT.is_file():
+        signer_dir = _resolve_signer_dir()
+        if not (signer_dir / "signer.js").is_file():
             return False
+        node = Path(self._node)
+        if node.is_absolute() or os.sep in self._node:
+            return node.is_file()
         return shutil.which(self._node) is not None
 
     def _start(self) -> None:
+        signer_dir = _resolve_signer_dir()
         self._proc = subprocess.Popen(
-            [self._node, str(SIGNER_SCRIPT)],
+            [self._node, str(signer_dir / "signer.js")],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
-            cwd=str(SIGNER_DIR),
+            cwd=str(signer_dir),
         )
 
     def _stop(self) -> None:

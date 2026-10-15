@@ -372,3 +372,19 @@ document.addEventListener("keydown", (event) => {
   }
 });
 loadCookieStatus();
+
+// 支持 ?text= / ?url= 预填并自动解析（移动端分享入口 / APK 分享直达）
+(() => {
+  const params = new URLSearchParams(window.location.search);
+  const shared = (params.get("text") || params.get("url") || "").trim();
+  if (!shared) {
+    return;
+  }
+  const input = $("input");
+  if (!input) {
+    return;
+  }
+  input.value = shared;
+  history.replaceState(null, "", window.location.pathname);
+  parse();
+})();

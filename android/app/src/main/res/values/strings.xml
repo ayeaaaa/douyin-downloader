@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">抖音下载站</string>
+    <string name="server_title">服务器地址</string>
+    <string name="server_message">填写部署了下载站的地址（局域网或公网）</string>
+    <string name="server_hint">http://192.168.1.100:50288</string>
+    <string name="server_save">保存</string>
+    <string name="server_cancel">取消</string>
+    <string name="settings">服务器</string>
+</resources>
