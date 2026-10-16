@@ -58,11 +58,22 @@ const FILES = [
 ];
 
 async function download(url) {
-  const response = await fetch(url, { headers: { "User-Agent": UA } });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} for ${url}`);
+  let lastError;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const response = await fetch(url, { headers: { "User-Agent": UA } });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} for ${url}`);
+      }
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+      if (attempt < 4) {
+        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+      }
+    }
   }
-  return await response.text();
+  throw lastError;
 }
 
 (async () => {
@@ -84,6 +95,10 @@ async function download(url) {
       process.stdout.write(`FAILED: ${error.message}\n`);
       process.exitCode = 1;
     }
+  }
+  if (process.exitCode) {
+    process.stdout.write("[fetch-sdk] incomplete\n");
+    process.exit(1);
   }
   process.stdout.write("[fetch-sdk] done\n");
 })();

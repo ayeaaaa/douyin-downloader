@@ -92,6 +92,8 @@ jobs:
       - name: Assemble web assets (SDK + UI into APK assets)
         run: |
           cd signer && node fetch-sdk.js && cd ..
+          test -f signer/sdk/bdms-signer.js
+          test -f signer/sdk/webmssdk.js
           mkdir -p android/app/src/main/assets/signer/sdk android/app/src/main/assets/www
           cp signer/sdk/*.js android/app/src/main/assets/signer/sdk/
           cp android/web/signer.html android/app/src/main/assets/signer/index.html
