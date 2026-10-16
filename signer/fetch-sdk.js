@@ -27,49 +27,71 @@ const CAPTCHA_TO = "ku=window.__ku=function(e,t){";
 const FILES = [
   {
     out: "webmssdk.js",
-    url: "https://lf-c-flwb.bytetos.com/obj/rc-client-security/c-webmssdk/1.0.0.20/webmssdk.es5.js",
+    urls: [
+      "https://lf-c-flwb.bytetos.com/obj/rc-client-security/c-webmssdk/1.0.0.20/webmssdk.es5.js",
+    ],
   },
   {
     out: "secsdk-runtime.js",
-    url: "https://lf-security.bytegoofy.com/obj/security-secsdk/runtime_bundler_34_v2.js",
+    urls: [
+      "https://lf-security.bytegoofy.com/obj/security-secsdk/runtime_bundler_34_v2.js",
+    ],
   },
   {
     out: "sdk-glue.js",
-    url: "https://lf-c-flwb.bytetos.com/obj/rc-client-security/web/glue/1.0.0.64-fix.01/sdk-glue.js",
+    urls: [
+      "https://lf-c-flwb.bytetos.com/obj/rc-client-security/web/glue/1.0.0.64-fix.01/sdk-glue.js",
+    ],
   },
   {
     out: "slardar.js",
-    url: "https://lf3-short.ibytedapm.com/slardar/fe/sdk-web/browser.cn.js?bid=douyin_web&globalName=bdSlardar",
+    urls: [
+      "https://lf3-short.ibytedapm.com/slardar/fe/sdk-web/browser.cn.js?bid=douyin_web&globalName=bdSlardar",
+    ],
   },
   {
     out: "bdms-signer.js",
-    url: "https://p-pc-weboff.byteimg.com/tos-cn-i-9r5gewecjs/bdms_1.0.1.19_fix.js",
+    urls: [
+      "https://p-pc-weboff.byteimg.com/tos-cn-i-9r5gewecjs/bdms_1.0.1.19_fix.js",
+      "https://lf-c-flwb.bytetos.com/obj/rc-client-security/web/stable/1.0.1.19-fix.01/bdms.js",
+      "https://lf-headquarters-speed.yhgfb-cn-static.com/obj/rc-client-security/web/stable/1.0.1.19-fix.01/bdms.js",
+    ],
     patch: { from: BDMS_FROM, to: BDMS_TO },
   },
   {
     out: "captcha-sdk.js",
-    url: "https://lf-rc1.yhgfb-cn-static.com/obj/rc-verifycenter/sec_sdk_build/4.0.28/captcha/index.js",
+    urls: [
+      "https://lf-rc1.yhgfb-cn-static.com/obj/rc-verifycenter/sec_sdk_build/4.0.28/captcha/index.js",
+    ],
     patch: { from: CAPTCHA_FROM, to: CAPTCHA_TO },
   },
   {
     out: "verifycenter.js",
-    url: "https://lf-rc1.yhgfb-cn-static.com/obj/rc-verifycenter/verifycenter/1.0.0.427/index.js",
+    urls: [
+      "https://lf-rc1.yhgfb-cn-static.com/obj/rc-verifycenter/verifycenter/1.0.0.427/index.js",
+    ],
   },
 ];
 
-async function download(url) {
+async function downloadOne(url) {
+  const response = await fetch(url, { headers: { "User-Agent": UA } });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} for ${url}`);
+  }
+  return await response.text();
+}
+
+async function download(urls) {
   let lastError;
-  for (let attempt = 1; attempt <= 4; attempt++) {
-    try {
-      const response = await fetch(url, { headers: { "User-Agent": UA } });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status} for ${url}`);
-      }
-      return await response.text();
-    } catch (error) {
-      lastError = error;
-      if (attempt < 4) {
-        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+  for (const url of urls) {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        return await downloadOne(url);
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) {
+          await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+        }
       }
     }
   }
@@ -82,7 +104,7 @@ async function download(url) {
     const target = path.join(SDK_DIR, file.out);
     process.stdout.write(`[fetch-sdk] ${file.out} ... `);
     try {
-      let source = await download(file.url);
+      let source = await download(file.urls);
       if (file.patch) {
         if (!source.includes(file.patch.from)) {
           throw new Error("patch anchor not found (SDK changed?)");
