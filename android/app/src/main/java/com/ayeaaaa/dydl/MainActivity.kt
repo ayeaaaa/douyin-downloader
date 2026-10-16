@@ -1,39 +1,53 @@
 package com.ayeaaaa.dydl
 
 import android.annotation.SuppressLint
+import android.app.DownloadManager
 import android.content.Intent
-import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Bundle
-import android.text.InputType
+import android.webkit.URLUtil
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
-import android.widget.EditText
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 
+/**
+ * Standalone mode: the app runs its own web UI + API locally.
+ *
+ * - [LocalServer] serves the UI and the /api/* endpoints on 127.0.0.1
+ * - [SignerController] keeps a hidden WebView that signs requests and
+ *   fetches the douyin detail API through its own network stack
+ * - [CookieStore] persists user cookies and syncs them into the WebView
+ */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private lateinit var prefs: SharedPreferences
+    private lateinit var signer: SignerController
+    private lateinit var cookieStore: CookieStore
+    private lateinit var server: LocalServer
+    private var bootstrapRequested = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        prefs = getSharedPreferences("dydl", MODE_PRIVATE)
-        webView = findViewById(R.id.webview)
+        cookieStore = CookieStore(this)
+        signer = SignerController(this)
+        signer.create()
+        server = LocalServer(this, signer, cookieStore)
+        val port = server.start()
 
+        webView = findViewById(R.id.webview)
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
-            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             mediaPlaybackRequiresUserGesture = false
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         }
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
@@ -41,12 +55,15 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest
             ): Boolean {
                 val url = request.url.toString()
-                // 站内导航保持在 WebView 内
                 return !(url.startsWith("http://") || url.startsWith("https://"))
             }
         }
+        webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+            startSystemDownload(url, userAgent, contentDisposition, mimeType)
+        }
 
-        findViewById<Button>(R.id.btn_settings).setOnClickListener { showServerDialog() }
+        val settingsButton = findViewById<Button>(R.id.btn_settings)
+        settingsButton.setOnClickListener { runBootstrap() }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -59,6 +76,9 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
+        webView.loadUrl("http://127.0.0.1:$port/")
+        cookieStore.syncToWebView()
+        maybeBootstrap()
         handleIntent(intent)
     }
 
@@ -67,8 +87,27 @@ class MainActivity : AppCompatActivity() {
         handleIntent(intent)
     }
 
-    private fun serverUrl(): String =
-        (prefs.getString("server", "") ?: "").trim().trimEnd('/')
+    override fun onDestroy() {
+        super.onDestroy()
+        server.stop()
+    }
+
+    private fun maybeBootstrap() {
+        if (bootstrapRequested) return
+        if (signer.hasUifid()) return
+        if (cookieStore.status().optInt("entries", 0) > 0) return
+        runBootstrap()
+    }
+
+    private fun runBootstrap() {
+        bootstrapRequested = true
+        Toast.makeText(this, "正在初始化(生成设备标识)…", Toast.LENGTH_SHORT).show()
+        signer.bootstrap { ok ->
+            if (ok) {
+                webView.reload()
+            }
+        }
+    }
 
     private fun handleIntent(intent: Intent?) {
         val sharedText = if (intent?.action == Intent.ACTION_SEND) {
@@ -76,39 +115,33 @@ class MainActivity : AppCompatActivity() {
         } else {
             null
         }
-
-        val server = serverUrl()
-        if (server.isEmpty()) {
-            showServerDialog()
-            return
-        }
-        when {
-            !sharedText.isNullOrBlank() -> {
-                val encoded = Uri.encode(sharedText)
-                webView.loadUrl("$server/?text=$encoded")
-            }
-            webView.url == null -> webView.loadUrl("$server/")
+        if (!sharedText.isNullOrBlank()) {
+            webView.loadUrl("http://127.0.0.1:${server.port}/?text=" + Uri.encode(sharedText))
         }
     }
 
-    private fun showServerDialog() {
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_TEXT_VARIATION_URI
-            setText(serverUrl())
-            hint = getString(R.string.server_hint)
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.server_title)
-            .setMessage(R.string.server_message)
-            .setView(input)
-            .setPositiveButton(R.string.server_save) { _, _ ->
-                val value = input.text.toString().trim().trimEnd('/')
-                prefs.edit().putString("server", value).apply()
-                if (value.isNotEmpty()) {
-                    webView.loadUrl("$value/")
-                }
+    private fun startSystemDownload(
+        url: String,
+        userAgent: String?,
+        contentDisposition: String?,
+        mimeType: String?,
+    ) {
+        try {
+            val request = DownloadManager.Request(Uri.parse(url))
+            request.setNotificationVisibility(
+                DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+            )
+            request.setMimeType(mimeType)
+            if (!userAgent.isNullOrBlank()) {
+                request.addRequestHeader("User-Agent", userAgent)
             }
-            .setNegativeButton(R.string.server_cancel, null)
-            .show()
+            val name = URLUtil.guessFileName(url, contentDisposition, mimeType)
+            request.setTitle(name)
+            val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+            manager.enqueue(request)
+            Toast.makeText(this, "已加入系统下载: $name", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "下载失败: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 }

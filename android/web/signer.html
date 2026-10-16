@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>signer</title>
+</head>
+<body>
+<script>
+// Kill real XHR sends BEFORE the SDKs wrap the prototype (they capture this stub).
+// The signing flow only needs the SDK bookkeeping, not actual network.
+window.__lastSignedUrl = null;
+window.__capUrl = function (u) { window.__lastSignedUrl = u; };
+window.__origFetch = window.fetch ? window.fetch.bind(window) : null;
+XMLHttpRequest.prototype.send = function () {};
+</script>
+<script src="sdk/webmssdk.js"></script>
+<script src="sdk/secsdk-runtime.js"></script>
+<script src="sdk/sdk-glue.js"></script>
+<script src="sdk/bdms-signer.js"></script>
+<script src="sdk/slardar.js?bid=douyin_web&globalName=bdSlardar"></script>
+<script src="sdk/verifycenter.js"></script>
+<script src="signer-glue.js"></script>
+</body>
+</html>

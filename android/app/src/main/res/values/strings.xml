@@ -6,5 +6,5 @@
     <string name="server_hint">http://192.168.1.100:50288</string>
     <string name="server_save">保存</string>
     <string name="server_cancel">取消</string>
-    <string name="settings">服务器</string>
+    <string name="settings">初始化</string>
 </resources>
