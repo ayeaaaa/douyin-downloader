@@ -120,11 +120,14 @@ class SignerController(private val context: Context) {
         webView.post { webView.loadUrl(SIGNER_PREFIX + "index.html") }
     }
 
+    @Volatile
+    private var destroyed = false
+
     fun signAndFetch(path: String, callback: (JSONObject) -> Unit) {
-        if (!ready) {
+        if (destroyed || !ready) {
             val obj = JSONObject()
             obj.put("ok", false)
-            obj.put("error", "signer not ready")
+            obj.put("error", if (destroyed) "signer destroyed" else "signer not ready")
             callback(obj)
             return
         }
@@ -133,6 +136,18 @@ class SignerController(private val context: Context) {
         val js = "window.__signer && window.__signer.signAndFetch(" +
             JSONObject.quote(path) + ", " + JSONObject.quote(id) + ")"
         webView.post { webView.evaluateJavascript(js, null) }
+    }
+
+    /** Release the hidden WebView; call from the activity's onDestroy. */
+    fun destroy() {
+        destroyed = true
+        pending.clear()
+        try {
+            webView.removeJavascriptInterface("AndroidSigner")
+            webView.loadUrl("about:blank")
+            webView.destroy()
+        } catch (e: Exception) {
+        }
     }
 
     inner class SignerBridge {

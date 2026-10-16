@@ -30,12 +30,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cookieStore: CookieStore
     private lateinit var server: LocalServer
     private var bootstrapRequested = false
+    private var uiShim = ""
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        uiShim = loadUiShim()
         cookieStore = CookieStore(this)
         signer = SignerController(this)
         signer.create()
@@ -56,6 +58,11 @@ class MainActivity : AppCompatActivity() {
             ): Boolean {
                 val url = request.url.toString()
                 return !(url.startsWith("http://") || url.startsWith("https://"))
+            }
+
+            override fun onPageFinished(view: WebView, url: String) {
+                // Runtime shim for the frozen UI (blob downloads -> local server).
+                view.evaluateJavascript(uiShim, null)
             }
         }
         webView.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
@@ -90,6 +97,15 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         server.stop()
+        signer.destroy()
+    }
+
+    private fun loadUiShim(): String {
+        return try {
+            assets.open("www/_ui-shim.js").use { it.readBytes().toString(Charsets.UTF_8) }
+        } catch (e: Exception) {
+            ""
+        }
     }
 
     private fun maybeBootstrap() {

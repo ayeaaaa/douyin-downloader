@@ -91,15 +91,28 @@ jobs:
 
       - name: Assemble web assets (SDK + UI into APK assets)
         run: |
-          cd signer && node fetch-sdk.js && cd ..
+          cd signer && npm install --omit=dev --no-audit --no-fund && node fetch-sdk.js && cd ..
           test -f signer/sdk/bdms-signer.js
           test -f signer/sdk/webmssdk.js
-          mkdir -p android/app/src/main/assets/signer/sdk android/app/src/main/assets/www
+          mkdir -p android/app/src/main/assets/signer/sdk/obj/security-secsdk android/app/src/main/assets/www
           cp signer/sdk/*.js android/app/src/main/assets/signer/sdk/
+          cp signer/sdk/secsdk-runtime.js android/app/src/main/assets/signer/sdk/obj/security-secsdk/runtime_bundler_34_v2.js
           cp android/web/signer.html android/app/src/main/assets/signer/index.html
           cp android/web/signer-glue.js android/app/src/main/assets/signer/
           cp -r app/static/. android/app/src/main/assets/www/
+          cp android/web/ui-shim.js android/app/src/main/assets/www/_ui-shim.js
           ls android/app/src/main/assets/signer android/app/src/main/assets/www | head -20
+
+      - name: Static checks (whitelist parity + shim syntax)
+        run: |
+          python3 android/web/check-whitelist.py
+          node --check android/web/ui-shim.js
+
+      - name: Signer smoke test (source)
+        run: NODE_PATH=signer/node_modules node android/web/smoke-test.js
+
+      - name: Signer smoke test (assembled assets)
+        run: NODE_PATH=signer/node_modules node android/web/smoke-test.js android/app/src/main/assets
 
       - name: Decode signing keystore
         env:

@@ -14,8 +14,10 @@ window.__capUrl = function (u) { window.__lastSignedUrl = u; };
 window.__origFetch = window.fetch ? window.fetch.bind(window) : null;
 XMLHttpRequest.prototype.send = function () {};
 </script>
+<!-- The runtime locates its own <script> by src pattern and reads project-id,
+     so the path must contain /obj/security-secsdk/runtime and carry the attributes. -->
+<script src="sdk/obj/security-secsdk/runtime_bundler_34_v2.js" project-id="64" custom-report-host=""></script>
 <script src="sdk/webmssdk.js"></script>
-<script src="sdk/secsdk-runtime.js"></script>
 <script src="sdk/sdk-glue.js"></script>
 <script src="sdk/bdms-signer.js"></script>
 <script src="sdk/slardar.js?bid=douyin_web&globalName=bdSlardar"></script>

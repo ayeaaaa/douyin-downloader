@@ -6,7 +6,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
-import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
@@ -92,14 +93,18 @@ class LocalServer(
                     }
                 }
                 val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
-                val body = readBody(input, contentLength)
 
                 val uri = URI("http://127.0.0.1" + target)
                 val path = uri.path ?: "/"
                 val query = parseQuery(uri.rawQuery)
 
                 try {
-                    route(method, path, query, headers, body, output)
+                    if (method == "POST" && path == "/api/save-blob") {
+                        handleSaveBlob(output, query, contentLength, input)
+                    } else {
+                        val body = readBody(input, contentLength)
+                        route(method, path, query, headers, body, output)
+                    }
                 } catch (e: Exception) {
                     try {
                         sendJson(output, 500, JSONObject().put("error", "服务器内部错误"))
@@ -132,6 +137,80 @@ class LocalServer(
             off += n
         }
         return buf
+    }
+
+    /** Streams the request body to a file (used by /api/save-blob). */
+    private fun readBodyToFile(input: InputStream, length: Int, target: File): Boolean {
+        return try {
+            FileOutputStream(target).use { out ->
+                var remaining = length.toLong()
+                val buf = ByteArray(65536)
+                while (remaining > 0) {
+                    val n = input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
+                    if (n < 0) return false
+                    out.write(buf, 0, n)
+                    remaining -= n
+                }
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** Saves the uploaded blob (slides zip from the UI shim) to Downloads. */
+    private fun handleSaveBlob(
+        output: OutputStream,
+        query: Map<String, String>,
+        contentLength: Int,
+        input: InputStream,
+    ) {
+        if (contentLength <= 0 || contentLength > 512 * 1024 * 1024) {
+            sendJson(output, 400, JSONObject().put("error", "无效的内容长度"))
+            return
+        }
+        val name = (query["name"] ?: "download.zip")
+            .replace("/", "_")
+            .replace("\\", "_")
+            .ifBlank { "download.zip" }
+        val temp = File.createTempFile("blob", ".bin", context.cacheDir)
+        if (!readBodyToFile(input, contentLength, temp)) {
+            temp.delete()
+            sendJson(output, 400, JSONObject().put("error", "读取失败"))
+            return
+        }
+        val saved = try {
+            saveToDownloads(name, temp)
+        } catch (e: Exception) {
+            false
+        }
+        temp.delete()
+        if (saved) {
+            sendJson(output, 200, JSONObject().put("ok", true).put("name", name))
+        } else {
+            sendJson(output, 502, JSONObject().put("error", "保存失败"))
+        }
+    }
+
+    private fun saveToDownloads(name: String, file: File): Boolean {
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val values = android.content.ContentValues().apply {
+                put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
+                put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+            }
+            val uri = context.contentResolver.insert(
+                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+            ) ?: return false
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                file.inputStream().use { it.copyTo(out, 65536) }
+            } ?: return false
+            return true
+        }
+        val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
+            ?: return false
+        dir.mkdirs()
+        file.copyTo(File(dir, name), overwrite = true)
+        return true
     }
 
     private fun parseQuery(raw: String?): Map<String, String> {
@@ -398,14 +477,7 @@ class LocalServer(
     private fun isAllowedCdn(raw: String): Boolean {
         return try {
             val host = URL(raw).host.lowercase()
-            host.endsWith(".douyin.com") || host == "douyin.com" ||
-                host.endsWith(".douyinvod.com") || host == "douyinvod.com" ||
-                host.endsWith(".douyinpic.com") || host == "douyinpic.com" ||
-                host.endsWith(".douyinstatic.com") || host == "douyinstatic.com" ||
-                host.endsWith(".bytedance.com") || host == "bytedance.com" ||
-                host.endsWith(".byteimg.com") || host == "byteimg.com" ||
-                host.endsWith(".ibytedtos.com") || host == "ibytedtos.com" ||
-                host.endsWith(".zijieapi.com") || host == "zijieapi.com"
+            ALLOWED_MEDIA_SUFFIXES.any { host == it || host.endsWith(".$it") }
         } catch (e: Exception) {
             false
         }
@@ -504,15 +576,21 @@ class LocalServer(
         }
         val title = payload.optString("title", "图文")
         val items = payload.optJSONArray("items") ?: JSONArray()
-        val buffer = ByteArrayOutputStream()
+        if (items.length() > 50) {
+            sendJson(output, 400, JSONObject().put("error", "一次最多打包 50 项"))
+            return
+        }
+        val temp = File.createTempFile("slides", ".zip", context.cacheDir)
+        var added = 0
         try {
-            ZipOutputStream(buffer).use { zip ->
+            ZipOutputStream(BufferedOutputStream(FileOutputStream(temp))).use { zip ->
                 for (i in 0 until items.length()) {
                     val item = items.optJSONObject(i) ?: continue
                     val url = item.optString("url", "")
                     if (url.isBlank() || !isAllowedCdn(url)) continue
-                    val index = item.optInt("index", i + 1)
-                    val kind = item.optString("kind", "image")
+                    val rawKind = item.optString("kind", "image")
+                    val kind = if (rawKind in setOf("image", "clip", "music")) rawKind else "image"
+                    val index = item.optInt("index", i + 1).coerceIn(1, 999)
                     val ext = extensionOf(url, kind)
                     try {
                         val conn = URL(url).openConnection() as HttpURLConnection
@@ -521,9 +599,12 @@ class LocalServer(
                         conn.setRequestProperty("User-Agent", BROWSER_UA)
                         conn.setRequestProperty("Referer", "https://www.douyin.com/")
                         conn.inputStream.use { stream ->
-                            zip.putNextEntry(ZipEntry(String.format("%02d_%s.%s", index, kind, ext)))
+                            zip.putNextEntry(
+                                ZipEntry(String.format("%03d_%s.%s", index, kind, ext))
+                            )
                             stream.copyTo(zip, 65536)
                             zip.closeEntry()
+                            added++
                         }
                         conn.disconnect()
                     } catch (e: Exception) {
@@ -531,21 +612,27 @@ class LocalServer(
                 }
             }
         } catch (e: Exception) {
+            temp.delete()
             sendJson(output, 502, JSONObject().put("error", "打包失败"))
             return
         }
-        val bytes = buffer.toByteArray()
+        if (added == 0) {
+            temp.delete()
+            sendJson(output, 502, JSONObject().put("error", "打包失败:没有可下载的内容"))
+            return
+        }
         val fileName = (title.ifBlank { "图文" } + "_图文.zip")
         writeHead(
             output, 200,
             mapOf(
                 "Content-Type" to "application/zip",
-                "Content-Length" to bytes.size.toString(),
+                "Content-Length" to temp.length().toString(),
                 "Content-Disposition" to
                     "attachment; filename*=UTF-8''" + URLEncoder.encode(fileName, "UTF-8"),
             )
         )
-        output.write(bytes)
+        temp.inputStream().use { it.copyTo(output, 65536) }
+        temp.delete()
     }
 
     private fun extensionOf(url: String, kind: String): String {
@@ -563,5 +650,21 @@ class LocalServer(
         const val BROWSER_UA =
             "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
+
+        /** Mirrors app/security.py ALLOWED_MEDIA_SUFFIXES (the server contract). */
+        private val ALLOWED_MEDIA_SUFFIXES = listOf(
+            "douyin.com",
+            "iesdouyin.com",
+            "douyinpic.com",
+            "douyinvod.com",
+            "douyinstatic.com",
+            "byteimg.com",
+            "ibytedtos.com",
+            "bytecdntp.com",
+            "zjcdn.com",
+            "snssdk.com",
+            "amemv.com",
+            "365yg.com",
+        )
     }
 }
