@@ -25,7 +25,7 @@ import java.util.zip.ZipOutputStream
 /**
  * Minimal local HTTP server powering the web UI inside the app:
  *  - serves the static UI (assets/www)
- *  - implements the same /api/* contract as the server version (app/main.py)
+ *  - implements the same /api contract as the server version (app/main.py)
  *  - proxies media/CDN requests with the required Referer header
  */
 class LocalServer(

@@ -18,7 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
 /**
  * Standalone mode: the app runs its own web UI + API locally.
  *
- * - [LocalServer] serves the UI and the /api/* endpoints on 127.0.0.1
+ * - [LocalServer] serves the UI and the /api endpoints on 127.0.0.1
  * - [SignerController] keeps a hidden WebView that signs requests and
  *   fetches the douyin detail API through its own network stack
  * - [CookieStore] persists user cookies and syncs them into the WebView
