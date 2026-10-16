@@ -85,6 +85,20 @@ jobs:
         with:
           gradle-version: "8.7"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.2"
+
+      - name: Assemble web assets (SDK + UI into APK assets)
+        run: |
+          cd signer && node fetch-sdk.js && cd ..
+          mkdir -p android/app/src/main/assets/signer/sdk android/app/src/main/assets/www
+          cp signer/sdk/*.js android/app/src/main/assets/signer/sdk/
+          cp android/web/signer.html android/app/src/main/assets/signer/index.html
+          cp android/web/signer-glue.js android/app/src/main/assets/signer/
+          cp -r app/static/. android/app/src/main/assets/www/
+          ls android/app/src/main/assets/signer android/app/src/main/assets/www | head -20
+
       - name: Decode signing keystore
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
