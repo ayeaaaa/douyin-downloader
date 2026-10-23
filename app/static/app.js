@@ -11,6 +11,38 @@ function el(tag, className, text) {
   return node;
 }
 
+// Copy text to the clipboard. The async Clipboard API is only exposed in
+// secure contexts (https / localhost); plain-http access (e.g. a LAN IP)
+// needs the legacy execCommand fallback.
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (err) {
+      // fall through to the legacy path
+    }
+  }
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.setAttribute("data-copy-fallback", "1");
+    area.style.position = "fixed";
+    area.style.top = "-1000px";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.focus();
+    area.select();
+    area.setSelectionRange(0, area.value.length);
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  } catch (err) {
+    return false;
+  }
+}
+
 function formatDuration(seconds) {
   if (!seconds) return "";
   const m = Math.floor(seconds / 60);
@@ -233,12 +265,8 @@ function renderCard(item) {
   if (item.direct_url) {
     const copy = el("button", "", "复制直链");
     copy.onclick = async () => {
-      try {
-        await navigator.clipboard.writeText(item.direct_url);
-        setStatus("直链已复制");
-      } catch (err) {
-        setStatus("复制失败，请手动复制");
-      }
+      const ok = await copyText(item.direct_url);
+      setStatus(ok ? "直链已复制" : "复制失败，请手动复制");
     };
     actions.append(copy);
   }
