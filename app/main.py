@@ -251,12 +251,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         handed_off = False
         try:
             cached = _cache_get(app.state.parse_cache, url)
-            direct_url = (
-                cached.get("direct_url") if cached and cached.get("direct_ok") else None
-            )
+            is_douyin = douyin.is_douyin_url(url)
+            direct_url = None
+            title = "video"
+            # douyinvod CDN URLs fail the referer-less probe (direct_ok=False)
+            # but the server can download them with a Referer header, so the
+            # cached direct URL is usable for Douyin regardless of direct_ok.
+            if (
+                cached
+                and cached.get("direct_url")
+                and (cached.get("direct_ok") or is_douyin)
+            ):
+                direct_url = cached["direct_url"]
+                title = cached.get("title") or "video"
             job_dir = tempfile.mkdtemp(dir=settings.temp_dir, prefix="job-")
             path = None
-            title = "video"
+            headers = {"User-Agent": BROWSER_UA}
+            if is_douyin:
+                headers["Referer"] = douyin.DOUYIN_REFERER
             if direct_url:
                 try:
                     path = await asyncio.to_thread(
@@ -264,11 +276,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         direct_url,
                         str(Path(job_dir) / "direct.mp4"),
                         settings.max_filesize_mb,
-                        {"User-Agent": BROWSER_UA},
+                        headers,
                     )
-                    title = cached.get("title") or "video"
                 except downloader.DownloadError:
                     path = None
+            if path is None and is_douyin:
+                # Cache missing/expired: re-extract through the signed detail API.
+                try:
+                    fresh = await asyncio.to_thread(
+                        douyin.extract_video_signed_from_url, url, settings.cookies_path
+                    )
+                except Exception:
+                    fresh = None
+                if fresh and fresh.get("direct_url"):
+                    title = fresh.get("title") or title
+                    try:
+                        path = await asyncio.to_thread(
+                            downloader.fetch_direct_to_temp,
+                            fresh["direct_url"],
+                            str(Path(job_dir) / "direct.mp4"),
+                            settings.max_filesize_mb,
+                            headers,
+                        )
+                    except downloader.DownloadError:
+                        path = None
             if path is None:
                 try:
                     path, title = await asyncio.to_thread(

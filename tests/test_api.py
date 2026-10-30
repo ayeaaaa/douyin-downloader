@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 from fastapi.testclient import TestClient
 
-from app import downloader, extractor, main
+from app import douyin, downloader, extractor, main
 from app.main import Settings, create_app, _RelayResponse
 
 
@@ -689,3 +689,92 @@ def test_slides_zip_rejects_zero_index(tmp_path):
         },
     )
     assert response.status_code == 400
+
+
+def test_download_uses_direct_url_when_probe_failed_for_douyin(tmp_path, monkeypatch):
+    """douyinvod CDN URLs fail the referer-less probe but download fine with the
+    Referer header; the download must not fall back to yt-dlp (which cannot sign)."""
+    calls = {"direct": 0, "ytdlp": 0, "headers": None}
+
+    def fake_parse(url, cookies_path=None):
+        return {
+            "url": url,
+            "ok": True,
+            "title": "标题",
+            "author": "",
+            "cover": "",
+            "duration": 0,
+            "direct_url": "https://v26-web.douyinvod.com/abc/video.mp4",
+            "direct_ok": False,
+            "error": None,
+        }
+
+    def fake_fetch(direct_url, dest_path, max_filesize_mb=500, headers=None):
+        calls["direct"] += 1
+        calls["headers"] = headers or {}
+        path = Path(dest_path)
+        path.write_bytes(b"direct-bytes")
+        return path
+
+    def fake_download(url, dest_dir, cookies_path=None, max_filesize_mb=500):
+        calls["ytdlp"] += 1
+        path = Path(dest_dir) / "video.mp4"
+        path.write_bytes(b"ytdlp-bytes")
+        return path, "标题"
+
+    monkeypatch.setattr(extractor, "parse_url", fake_parse)
+    monkeypatch.setattr(downloader, "fetch_direct_to_temp", fake_fetch)
+    monkeypatch.setattr(downloader, "download_to_temp", fake_download)
+
+    client = make_client(tmp_path)
+    client.post("/api/parse", json={"text": "https://www.douyin.com/video/123"})
+    response = client.get(
+        "/api/download", params={"url": "https://www.douyin.com/video/123"}
+    )
+    assert response.status_code == 200
+    assert response.content == b"direct-bytes"
+    assert calls["ytdlp"] == 0
+    assert calls["headers"].get("Referer") == "https://www.douyin.com/"
+
+
+def test_download_douyin_reparses_when_cache_missing(tmp_path, monkeypatch):
+    calls = {"signed": 0, "direct": 0, "ytdlp": 0}
+
+    def fake_signed(url, cookies_path=None):
+        calls["signed"] += 1
+        return {
+            "url": url,
+            "ok": True,
+            "title": "标题",
+            "author": "",
+            "cover": "",
+            "duration": 0,
+            "direct_url": "https://v26-web.douyinvod.com/x/video.mp4",
+            "direct_ok": False,
+            "error": None,
+        }
+
+    def fake_fetch(direct_url, dest_path, max_filesize_mb=500, headers=None):
+        calls["direct"] += 1
+        path = Path(dest_path)
+        path.write_bytes(b"direct-bytes")
+        return path
+
+    def fake_download(url, dest_dir, cookies_path=None, max_filesize_mb=500):
+        calls["ytdlp"] += 1
+        path = Path(dest_dir) / "video.mp4"
+        path.write_bytes(b"ytdlp-bytes")
+        return path, "标题"
+
+    monkeypatch.setattr(douyin, "extract_video_signed_from_url", fake_signed)
+    monkeypatch.setattr(downloader, "fetch_direct_to_temp", fake_fetch)
+    monkeypatch.setattr(downloader, "download_to_temp", fake_download)
+
+    client = make_client(tmp_path)
+    response = client.get(
+        "/api/download", params={"url": "https://www.douyin.com/video/123"}
+    )
+    assert response.status_code == 200
+    assert response.content == b"direct-bytes"
+    assert calls["signed"] == 1
+    assert calls["ytdlp"] == 0
